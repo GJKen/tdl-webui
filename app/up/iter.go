@@ -37,6 +37,7 @@ type iter struct {
 	chat    string
 	topic   int
 	photo   bool
+	asFile  bool
 	remove  bool
 	delay   time.Duration
 	manager *peers.Manager
@@ -46,7 +47,7 @@ type iter struct {
 	file uploader.Elem
 }
 
-func newIter(files []*File, to, caption *vm.Program, chat string, topic int, photo, remove bool, delay time.Duration, manager *peers.Manager) *iter {
+func newIter(files []*File, to, caption *vm.Program, chat string, topic int, photo, asFile, remove bool, delay time.Duration, manager *peers.Manager) *iter {
 	return &iter{
 		files:   files,
 		to:      to,
@@ -54,6 +55,7 @@ func newIter(files []*File, to, caption *vm.Program, chat string, topic int, pho
 		chat:    chat,
 		topic:   topic,
 		photo:   photo,
+		asFile:  asFile,
 		remove:  remove,
 		delay:   delay,
 		manager: manager,
@@ -125,6 +127,7 @@ func (i *iter) next(ctx context.Context, cur *File) (*iterElem, error) {
 		thread:  thread,
 
 		asPhoto: i.photo,
+		asFile:  i.asFile,
 		remove:  i.remove,
 	}, nil
 }

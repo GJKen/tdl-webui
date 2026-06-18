@@ -46,15 +46,19 @@ func (u *Uploader) Upload(ctx context.Context, limit int) error {
 
 		wg.Go(func() (rerr error) {
 			u.opts.Progress.OnAdd(elem)
-			defer func() { u.opts.Progress.OnDone(elem, rerr) }()
 
-			if err := u.upload(wgctx, elem); err != nil {
-				// canceled by user, so we directly return error to stop all
-				if errors.Is(err, context.Canceled) {
-					return errors.Wrap(err, "upload")
-				}
+			upErr := u.upload(wgctx, elem)
+			// Report the real per-file result to the progress sink: the CLI marks
+			// the tracker errored and logs it, the web UI records it on the task.
+			// Previously any non-cancel error was swallowed before OnDone, so a
+			// failed send (e.g. no send permission in the target channel) was
+			// reported as success.
+			defer func() { u.opts.Progress.OnDone(elem, upErr) }()
 
-				// don't return error, just log it
+			// A user cancellation aborts the whole batch; any other per-file error
+			// is surfaced via OnDone but does not stop the remaining files.
+			if upErr != nil && errors.Is(upErr, context.Canceled) {
+				return errors.Wrap(upErr, "upload")
 			}
 
 			return nil
@@ -83,19 +87,6 @@ func (u *Uploader) upload(ctx context.Context, elem Elem) error {
 			process: u.opts.Progress,
 		})
 
-	f, err := up.Upload(ctx, uploader.NewUpload(elem.File().Name(), elem.File(), elem.File().Size()))
-	if err != nil {
-		return errors.Wrap(err, "upload file")
-	}
-
-	if _, err = elem.File().Seek(0, io.SeekStart); err != nil {
-		return errors.Wrap(err, "seek file")
-	}
-	mime, err := mimetype.DetectReader(elem.File())
-	if err != nil {
-		return errors.Wrap(err, "detect mime")
-	}
-
 	// here convert underlying entities to formatters for message caption
 	caption := styling.Custom(func(eb *entity.Builder) error {
 		msg, entities := elem.Caption()
@@ -107,39 +98,14 @@ func (u *Uploader) upload(ctx context.Context, elem Elem) error {
 		return nil
 	})
 
-	doc := message.UploadedDocument(f, caption).MIME(mime.String()).Filename(elem.File().Name())
-	// upload thumbnail TODO(iyear): maybe still unavailable
-	if thumb, ok := elem.Thumb(); ok {
-		if thumbFile, err := uploader.NewUploader(u.opts.Client).
-			FromReader(ctx, thumb.Name(), thumb); err == nil {
-			doc = doc.Thumb(thumbFile)
-		}
+	var thumb File
+	if t, ok := elem.Thumb(); ok {
+		thumb = t
 	}
 
-	var media message.MediaOption = doc
-
-	switch {
-	case mediautil.IsImage(mime.String()) && elem.AsPhoto():
-		// webp should be uploaded as document
-		if mime.String() == "image/webp" {
-			break
-		}
-		// upload as photo
-		media = message.UploadedPhoto(f, caption)
-	case mediautil.IsVideo(mime.String()):
-		// reset reader
-		if _, err = elem.File().Seek(0, io.SeekStart); err != nil {
-			return errors.Wrap(err, "seek file")
-		}
-		if dur, w, h, err := mediautil.GetMP4Info(elem.File()); err == nil {
-			// #132. There may be some errors, but we can still upload the file
-			media = doc.Video().
-				Duration(time.Duration(dur)*time.Second).
-				Resolution(w, h).
-				SupportsStreaming()
-		}
-	case mediautil.IsAudio(mime.String()):
-		media = doc.Audio().Title(fsutil.GetNameWithoutExt(elem.File().Name()))
+	media, err := BuildMedia(ctx, up, elem.File(), thumb, elem.AsPhoto(), elem.AsFile(), caption)
+	if err != nil {
+		return err
 	}
 
 	_, err = message.NewSender(u.opts.Client).
@@ -152,4 +118,60 @@ func (u *Uploader) upload(ctx context.Context, elem Elem) error {
 	}
 
 	return nil
+}
+
+// BuildMedia uploads file (and an optional thumb) through up and builds the
+// media option for sending. It is a plain document unless asFile is false and
+// the content is detected as image+asPhoto / video / audio. The returned option
+// satisfies both MediaOption (single send) and MultiMediaOption (albums), so it
+// is reusable by the per-file path and the album path.
+func BuildMedia(ctx context.Context, up *uploader.Uploader, file, thumb File, asPhoto, asFile bool, caption ...message.StyledTextOption) (message.MultiMediaOption, error) {
+	f, err := up.Upload(ctx, uploader.NewUpload(file.Name(), file, file.Size()))
+	if err != nil {
+		return nil, errors.Wrap(err, "upload file")
+	}
+
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		return nil, errors.Wrap(err, "seek file")
+	}
+	mime, err := mimetype.DetectReader(file)
+	if err != nil {
+		return nil, errors.Wrap(err, "detect mime")
+	}
+
+	doc := message.UploadedDocument(f, caption...).MIME(mime.String()).Filename(file.Name())
+	if thumb != nil {
+		if thumbFile, err := up.FromReader(ctx, thumb.Name(), thumb); err == nil {
+			doc = doc.Thumb(thumbFile)
+		}
+	}
+
+	var media message.MultiMediaOption = doc
+
+	// AsFile forces a plain document; otherwise detect photo/video/audio.
+	if !asFile {
+		switch {
+		case mediautil.IsImage(mime.String()) && asPhoto:
+			// webp should be uploaded as document
+			if mime.String() == "image/webp" {
+				break
+			}
+			media = message.UploadedPhoto(f, caption...)
+		case mediautil.IsVideo(mime.String()):
+			if _, err = file.Seek(0, io.SeekStart); err != nil {
+				return nil, errors.Wrap(err, "seek file")
+			}
+			if dur, w, h, err := mediautil.GetMP4Info(file); err == nil {
+				// #132. There may be some errors, but we can still upload the file
+				media = doc.Video().
+					Duration(time.Duration(dur)*time.Second).
+					Resolution(w, h).
+					SupportsStreaming()
+			}
+		case mediautil.IsAudio(mime.String()):
+			media = doc.Audio().Title(fsutil.GetNameWithoutExt(file.Name()))
+		}
+	}
+
+	return media, nil
 }

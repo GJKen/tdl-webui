@@ -126,6 +126,18 @@ func (l *legacy) Close() error {
 	return l.bolt.Close()
 }
 
+func (l *legacy) DeleteNamespace(ns string) error {
+	if ns == "" {
+		return errors.New("namespace is required")
+	}
+	return l.bolt.Update(func(tx *bbolt.Tx) error {
+		if tx.Bucket([]byte(ns)) == nil {
+			return nil
+		}
+		return tx.DeleteBucket([]byte(ns))
+	})
+}
+
 type legacyKV struct {
 	db *bbolt.DB
 	ns []byte

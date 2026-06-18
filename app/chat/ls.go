@@ -31,7 +31,14 @@ type Dialog struct {
 	Type        string  `json:"type" comment:"Type of dialog. Can be 'private', 'channel' or 'group'"`
 	VisibleName string  `json:"visible_name,omitempty" comment:"Title of channel and group, first and last name of user. If empty, output '-'"`
 	Username    string  `json:"username,omitempty" comment:"Username of dialog. If empty, output '-'"`
+	Bot         bool    `json:"bot,omitempty" comment:"Whether a private peer is a bot (only meaningful when Type=='private')"`
 	Topics      []Topic `json:"topics,omitempty" comment:"Topics of dialog. If not set, output '-'"`
+	// SendForbidden reports whether the current account is forbidden to send
+	// media to this dialog, computed from the rights carried in the dialog
+	// entity. Kept as "forbidden" (not "can send") so the zero value means
+	// allowed: an old cache without this field, or the CLI, defaults to sendable.
+	SendForbidden    bool   `json:"send_forbidden,omitempty" comment:"Whether the current account is forbidden to send media here"`
+	SendForbidReason string `json:"send_forbid_reason,omitempty" comment:"Reason sending is forbidden, if SendForbidden is true"`
 }
 
 type Topic struct {
@@ -57,8 +64,6 @@ type ListOptions struct {
 }
 
 func List(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts ListOptions) error {
-	log := logctx.From(ctx)
-
 	// align output
 	runewidth.EastAsianWidth = false
 	runewidth.DefaultCondition.EastAsianWidth = false
@@ -74,10 +79,43 @@ func List(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Lis
 		fmt.Print(fg.Sprint(fields, true))
 		return nil
 	}
-	// compile filter
-	filter, err := expr.Compile(opts.Filter, expr.AsBool())
+
+	result, err := ListDialogs(ctx, c, kvd, opts.Filter)
 	if err != nil {
-		return fmt.Errorf("failed to compile filter: %w", err)
+		return err
+	}
+
+	switch opts.Output {
+	case ListOutputTable:
+		printTable(result)
+	case ListOutputJson:
+		bytes, err := json.MarshalIndent(result, "", "\t")
+		if err != nil {
+			return fmt.Errorf("marshal json: %w", err)
+		}
+
+		fmt.Println(string(bytes))
+	default:
+		return fmt.Errorf("unknown output: %s", opts.Output)
+	}
+
+	return nil
+}
+
+// ListDialogs fetches the account's dialogs, applies the given expr filter
+// (use "true" for no filtering), and returns the matching dialogs.
+//
+// As a side effect it caches peer access-hashes via applyPeers, so callers can
+// subsequently resolve those peers by numeric id (e.g. for uploading to a
+// private chat/channel by id). This is the programmatic core shared by the
+// `chat ls` command and the web UI.
+func ListDialogs(ctx context.Context, c *telegram.Client, kvd storage.Storage, filterExpr string) ([]*Dialog, error) {
+	log := logctx.From(ctx)
+
+	// compile filter
+	filter, err := expr.Compile(filterExpr, expr.AsBool())
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile filter: %w", err)
 	}
 
 	// Manually iterate through dialogs to handle errors gracefully
@@ -92,7 +130,7 @@ func List(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Lis
 
 	blocked, err := tutil.GetBlockedDialogs(ctx, c.API())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	manager := peers.Options{Storage: storage.NewPeers(kvd)}.Build(c.API())
@@ -128,7 +166,7 @@ func List(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Lis
 		// filter
 		b, err := texpr.Run(filter, r)
 		if err != nil {
-			return fmt.Errorf("failed to run filter: %w", err)
+			return nil, fmt.Errorf("failed to run filter: %w", err)
 		}
 		if !b.(bool) {
 			continue
@@ -137,21 +175,7 @@ func List(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Lis
 		result = append(result, r)
 	}
 
-	switch opts.Output {
-	case ListOutputTable:
-		printTable(result)
-	case ListOutputJson:
-		bytes, err := json.MarshalIndent(result, "", "\t")
-		if err != nil {
-			return fmt.Errorf("marshal json: %w", err)
-		}
-
-		fmt.Println(string(bytes))
-	default:
-		return fmt.Errorf("unknown output: %s", opts.Output)
-	}
-
-	return nil
+	return result, nil
 }
 
 func printTable(result []*Dialog) {
@@ -200,11 +224,19 @@ func processUser(id int64, entities peer.Entities) *Dialog {
 		return nil
 	}
 
+	// Skip deleted accounts: Telegram marks them with the Deleted flag, they have
+	// no name/username/photo and can't be a useful target, so they shouldn't show
+	// up in the dialog list at all.
+	if u.Deleted {
+		return nil
+	}
+
 	return &Dialog{
 		ID:          u.ID,
 		VisibleName: visibleName(u.FirstName, u.LastName),
 		Username:    u.Username,
 		Type:        DialogPrivate,
+		Bot:         u.Bot,
 		Topics:      nil,
 	}
 }
@@ -230,6 +262,8 @@ func processChannel(ctx context.Context, api *tg.Client, id int64, entities peer
 	default:
 		d.Type = DialogUnknown
 	}
+
+	d.SendForbidden, d.SendForbidReason = channelSendForbidden(c)
 
 	if c.Forum {
 		topics, err := fetchTopics(ctx, api, c.AsInputPeer())
@@ -338,13 +372,78 @@ func processChat(id int64, entities peer.Entities) *Dialog {
 		return nil
 	}
 
-	return &Dialog{
+	d := &Dialog{
 		ID:          c.ID,
 		VisibleName: c.Title,
 		Username:    "-",
 		Type:        DialogGroup,
 		Topics:      nil,
 	}
+	d.SendForbidden, d.SendForbidReason = chatSendForbidden(c)
+	return d
+}
+
+// anyAdminRight reports whether the user holds any admin right in a chat or
+// channel. Admins are exempt from (default) banned rights, so any admin right
+// means they can still send.
+func anyAdminRight(r tg.ChatAdminRights) bool {
+	return r.ChangeInfo || r.PostMessages || r.EditMessages || r.DeleteMessages ||
+		r.BanUsers || r.InviteUsers || r.PinMessages || r.AddAdmins ||
+		r.ManageCall || r.ManageTopics || r.Other
+}
+
+// sendMediaBanned reports whether the given banned rights block media uploads —
+// either by forbidding messages outright or media specifically.
+func sendMediaBanned(r tg.ChatBannedRights) bool {
+	return r.SendMessages || r.SendMedia
+}
+
+// channelSendForbidden computes whether the current account is forbidden to send
+// media to a channel / supergroup, using the rights carried in the dialog's
+// channel entity (the account's own AdminRights/BannedRights and the channel's
+// DefaultBannedRights) — no extra API call. Conservative: only reports forbidden
+// when clearly so, leaving the rest to the runtime send error.
+func channelSendForbidden(c *tg.Channel) (bool, string) {
+	// the creator can always send
+	if c.Creator {
+		return false, ""
+	}
+	// broadcast channel / gigagroup: only admins with post rights may post
+	if c.Broadcast || c.Gigagroup {
+		if c.AdminRights.PostMessages {
+			return false, ""
+		}
+		return true, "没有该频道的发帖权限"
+	}
+	// supergroup: any admin is exempt from banned rights; otherwise must be a
+	// member and not restricted by own or group-wide banned rights
+	if anyAdminRight(c.AdminRights) {
+		return false, ""
+	}
+	if c.Left {
+		return true, "不在该群组中"
+	}
+	if sendMediaBanned(c.BannedRights) {
+		return true, "你已被限制在该群发送内容"
+	}
+	if sendMediaBanned(c.DefaultBannedRights) {
+		return true, "该群组禁止发送媒体"
+	}
+	return false, ""
+}
+
+// chatSendForbidden is channelSendForbidden's basic-group counterpart.
+func chatSendForbidden(c *tg.Chat) (bool, string) {
+	if c.Creator || anyAdminRight(c.AdminRights) {
+		return false, ""
+	}
+	if c.Left || c.Deactivated {
+		return true, "不在该群组中"
+	}
+	if sendMediaBanned(c.DefaultBannedRights) {
+		return true, "该群组禁止发送媒体"
+	}
+	return false, ""
 }
 
 func visibleName(first, last string) string {

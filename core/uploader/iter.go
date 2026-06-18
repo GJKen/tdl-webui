@@ -26,4 +26,6 @@ type Elem interface {
 	To() tg.InputPeerClass
 	Thread() int
 	AsPhoto() bool
+	// AsFile forces a plain document, skipping photo/video/audio detection.
+	AsFile() bool
 }

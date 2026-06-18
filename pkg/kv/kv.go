@@ -25,6 +25,9 @@ type Storage interface {
 	MigrateFrom(Meta) error
 	Namespaces() ([]string, error)
 	Open(ns string) (storage.Storage, error)
+	// DeleteNamespace removes a namespace and all of its data. It is a no-op if
+	// the namespace does not exist.
+	DeleteNamespace(ns string) error
 	io.Closer
 }
 

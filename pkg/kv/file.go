@@ -110,6 +110,25 @@ func (f *file) Close() error {
 	return nil
 }
 
+func (f *file) DeleteNamespace(ns string) error {
+	if ns == "" {
+		return errors.New("namespace is required")
+	}
+
+	read, err := f.read()
+	if err != nil {
+		return errors.Wrap(err, "read")
+	}
+	if _, ok := read[ns]; !ok {
+		return nil
+	}
+	delete(read, ns)
+	if err = f.write(read); err != nil {
+		return errors.Wrap(err, "write")
+	}
+	return nil
+}
+
 func (f *file) read() (map[string]map[string][]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -133,6 +133,28 @@ func (b *bolt) Open(ns string) (storage.Storage, error) {
 	return b.open(ns)
 }
 
+func (b *bolt) DeleteNamespace(ns string) error {
+	if ns == "" {
+		return errors.New("namespace is required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Close the cached handle first: on Windows an open bbolt file cannot be
+	// removed.
+	if db, ok := b.dbs[ns]; ok {
+		if err := db.Close(); err != nil {
+			return errors.Wrap(err, "close db")
+		}
+		delete(b.dbs, ns)
+	}
+
+	if err := os.Remove(filepath.Join(b.path, ns)); err != nil && !os.IsNotExist(err) {
+		return errors.Wrap(err, "remove db file")
+	}
+	return nil
+}
+
 func (b *bolt) open(ns string) (*legacyKV, error) {
 	if ns == "" {
 		return nil, errors.New("namespace is required")

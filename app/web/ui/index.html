@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tdl web UI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <!-- current account button + dropdown (top-left, where the title used to be) -->
+    <div class="account" id="account">
+      <button id="account-btn" class="account-btn" aria-haspopup="true" aria-expanded="false">
+        <span class="acc-main">
+          <span id="acc-title" class="acc-title">未登录</span>
+          <span id="acc-sub" class="acc-sub muted"></span>
+        </span>
+        <span class="caret">▾</span>
+      </button>
+
+      <div id="account-menu" class="account-menu" role="menu">
+        <ul id="accounts-list" class="acc-list"></ul>
+        <div class="acc-menu-foot">
+          <button id="btn-open-login" class="btn primary block">＋ 添加账号 / 登录</button>
+        </div>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="chats">会话</button>
+      <button class="tab" data-tab="tasks">任务</button>
+    </nav>
+
+    <div class="brand">tdl <span class="muted">web UI</span></div>
+  </header>
+
+  <main>
+    <!-- Chats console: conversation list (left) + per-conversation window (right) -->
+    <section id="tab-chats" class="panel active">
+      <div class="console">
+        <!-- left: conversation list -->
+        <aside class="chat-list">
+          <div class="chat-list-head">
+            <div class="chat-search">
+              <span class="search-ic">🔍</span>
+              <input id="chat-search" type="text" placeholder="搜索会话" />
+            </div>
+          </div>
+          <ul id="chat-items" class="chat-items"></ul>
+          <div class="chat-list-foot">
+            <button id="btn-refresh-chats" class="btn block">⟳ 刷新会话列表</button>
+          </div>
+          <button id="chat-totop" class="to-top" title="返回顶部" aria-label="返回顶部">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+          </button>
+        </aside>
+
+        <!-- right: selected conversation window -->
+        <section class="chat-window" id="chat-window">
+          <div class="cw-empty" id="cw-empty">← 选择左侧一个会话开始发送</div>
+
+          <div class="cw-main hidden" id="cw-main">
+            <header class="cw-head">
+              <div class="avatar" id="cw-avatar"></div>
+              <div class="cw-head-main">
+                <div class="cw-title" id="cw-title"></div>
+                <div class="cw-meta muted" id="cw-meta"></div>
+              </div>
+              <button id="cw-refresh" class="icon-btn" title="刷新会话列表（重新拉取并缓存目标）">⟳</button>
+            </header>
+
+            <div class="cw-history" id="cw-history"></div>
+
+            <div class="cw-forbidden hidden" id="cw-forbidden"></div>
+
+            <div class="cw-composer" id="cw-composer">
+              <div class="composer-row">
+                <input id="cw-caption" type="text" class="grow" placeholder='caption（markdown：`代码`、[文字](链接)、**粗**，可空）' />
+                <input id="cw-topic" type="number" min="0" class="topic" placeholder="topic" title="话题 id（仅论坛群需要，可留空）" />
+              </div>
+
+              <input id="cw-file" type="file" multiple hidden />
+              <div id="cw-drop" class="drop-bar" tabindex="0">
+                <div class="drop-inner">
+                  <div class="drop-ic">📎</div>
+                  <div>拖拽文件到这里，或<b>点击选择文件</b>发送</div>
+                </div>
+              </div>
+
+              <details class="path-mode">
+                <summary>或：发送服务器本地路径（不经浏览器上传，适合服务器上的大文件/目录批量）</summary>
+                <div class="composer-row">
+                  <input id="cw-path" type="text" class="grow" placeholder="服务器本地文件/目录绝对路径，如 D:\path\file.mkv" />
+                </div>
+                <div class="composer-row wrap">
+                  <label class="inline"><input id="cw-photo" type="checkbox" /> 图片作为照片</label>
+                  <input id="cw-includes" type="text" class="grow" placeholder="仅含扩展名 mp4,mkv（目录批量时）" />
+                  <input id="cw-excludes" type="text" class="grow" placeholder="排除扩展名 txt,nfo" />
+                  <button id="cw-send" class="btn">发送路径</button>
+                </div>
+              </details>
+
+              <p id="cw-status" class="status"></p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Tasks: global overview across all conversations -->
+    <section id="tab-tasks" class="panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>上传任务（全局总览）</h2>
+          <span class="muted">每 2 秒自动刷新；详细进度条在运行服务的终端里</span>
+        </div>
+        <table class="tasks">
+          <thead>
+            <tr><th>ID</th><th>账号</th><th>目标</th><th>路径</th><th>状态</th><th>错误</th></tr>
+          </thead>
+          <tbody id="tasks-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- conversation row context menu -->
+  <div id="chat-ctx" class="ctx-menu"></div>
+
+  <!-- file send options dialog (after drag/pick): per-file photo/video/file choice -->
+  <div id="send-modal" class="modal-overlay">
+    <div class="modal send-modal">
+      <div class="modal-head">
+        <h2>发送文件</h2>
+        <button id="send-close" class="icon-btn" title="关闭">✕</button>
+      </div>
+      <div id="send-target" class="muted send-target"></div>
+      <div id="send-files" class="send-files"></div>
+      <label class="inline album-toggle" id="send-album-row"><input id="send-album" type="checkbox" /> 作为相册发送（一组最多 10 个，超出自动分组；图片→照片、视频→视频）</label>
+      <label class="inline album-toggle" id="send-asfile-row" style="display:none"><input id="send-asfile" type="checkbox" /> 全部作为文件发送（合并成一个相册）；取消勾选则分开逐个发送</label>
+      <label>caption（markdown，可空）
+        <input id="send-caption" type="text" placeholder="`代码`  [文字](链接)  **粗**" />
+      </label>
+      <div class="send-preview-label muted">预览（发送后的大致效果）</div>
+      <div id="send-preview" class="send-preview"></div>
+      <div class="dialog-actions">
+        <button id="send-cancel" class="btn">取消</button>
+        <button id="send-go" class="btn primary">发送</button>
+      </div>
+      <p id="send-status" class="status"></p>
+    </div>
+  </div>
+
+  <!-- Login modal (wizard: name+phone → code → 2FA → done) -->
+  <div id="login-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>登录 Telegram 账号</h2>
+        <button id="login-close" class="icon-btn" title="关闭">✕</button>
+      </div>
+
+      <div class="login-step" id="step-phone">
+        <label>账号名称（可留空，留空就用 Telegram 昵称）
+          <input id="login-name" type="text" placeholder="留空 = 用 TG 昵称" />
+        </label>
+        <label>手机号（含国家码，+ 号已自动带上，不用再输）
+          <div class="phone-input">
+            <span class="phone-prefix">+</span>
+            <input id="login-phone" type="text" inputmode="tel" placeholder="86 13800138000" />
+          </div>
+        </label>
+        <button id="btn-login-start" class="btn primary block">发送验证码</button>
+      </div>
+
+      <div class="login-step hidden" id="step-code">
+        <label>验证码（发到你已登录的 Telegram 客户端，不是短信）
+          <input id="login-code" type="text" inputmode="numeric" placeholder="12345" />
+        </label>
+        <button id="btn-login-code" class="btn primary block">提交验证码</button>
+      </div>
+
+      <div class="login-step hidden" id="step-password">
+        <label>两步验证密码（2FA）
+          <input id="login-password" type="password" placeholder="••••••" />
+        </label>
+        <button id="btn-login-password" class="btn primary block">提交密码</button>
+      </div>
+
+      <p id="login-status" class="status"></p>
+    </div>
+  </div>
+
+  <!-- generic dialog: rename input / delete confirm / error alert -->
+  <div id="dialog" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head"><h2 id="dialog-title"></h2></div>
+      <p id="dialog-msg" class="muted hidden"></p>
+      <input id="dialog-input" type="text" class="hidden" />
+      <div class="dialog-actions">
+        <button id="dialog-cancel" class="btn">取消</button>
+        <button id="dialog-ok" class="btn primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

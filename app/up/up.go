@@ -40,7 +40,34 @@ type Options struct {
 	Excludes []string
 	Remove   bool
 	Photo    bool
+	AsFile   bool
+	Album    bool
 	Caption  string
+	// Progress, when set, additionally receives upload progress callbacks (the
+	// terminal progress bar always runs too). Used by the web UI to report
+	// per-task percent.
+	Progress uploader.Progress
+}
+
+// multiProgress fans uploader progress callbacks out to several sinks.
+type multiProgress []uploader.Progress
+
+func (m multiProgress) OnAdd(e uploader.Elem) {
+	for _, p := range m {
+		p.OnAdd(e)
+	}
+}
+
+func (m multiProgress) OnUpload(e uploader.Elem, s uploader.ProgressState) {
+	for _, p := range m {
+		p.OnUpload(e, s)
+	}
+}
+
+func (m multiProgress) OnDone(e uploader.Elem, err error) {
+	for _, p := range m {
+		p.OnDone(e, err)
+	}
 }
 
 type Env struct {
@@ -94,11 +121,27 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		prog.EnablePS(ctx, upProgress)
 	}
 
+	// Album mode: send the files as Telegram media group(s) (one grouped message
+	// per <=10 files) instead of one message per file. Handled separately from
+	// the per-file uploader iterator path.
+	if opts.Album {
+		go upProgress.Render()
+		defer prog.Wait(ctx, upProgress)
+		return runAlbum(ctx, pool.Default(ctx), manager, files, opts, caption, opts.Progress, upProgress)
+	}
+
+	// terminal progress always renders; an optional extra sink (e.g. web) is
+	// composed in when provided.
+	var progress uploader.Progress = newProgress(upProgress)
+	if opts.Progress != nil {
+		progress = multiProgress{newProgress(upProgress), opts.Progress}
+	}
+
 	options := uploader.Options{
 		Client:   pool.Default(ctx),
 		Threads:  viper.GetInt(consts.FlagThreads),
-		Iter:     newIter(files, to, caption, opts.Chat, opts.Thread, opts.Photo, opts.Remove, viper.GetDuration(consts.FlagDelay), manager),
-		Progress: newProgress(upProgress),
+		Iter:     newIter(files, to, caption, opts.Chat, opts.Thread, opts.Photo, opts.AsFile, opts.Remove, viper.GetDuration(consts.FlagDelay), manager),
+		Progress: progress,
 	}
 
 	up := uploader.New(options)

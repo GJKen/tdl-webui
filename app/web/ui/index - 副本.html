@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tdl web UI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>tdl <span class="muted">web UI</span></h1>
+    <nav class="tabs">
+      <button class="tab active" data-tab="accounts">账号</button>
+      <button class="tab" data-tab="upload">上传</button>
+      <button class="tab" data-tab="tasks">任务</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Accounts -->
+    <section id="tab-accounts" class="panel active">
+      <div class="card">
+        <div class="card-head">
+          <h2>已登录账号</h2>
+          <button id="btn-refresh-accounts" class="btn">刷新</button>
+        </div>
+        <ul id="accounts-list" class="list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>添加账号 / 验证码登录</h2>
+        <div class="form">
+          <label>namespace（账号隔离名，新名字=新账号）
+            <input id="login-ns" type="text" placeholder="default" />
+          </label>
+          <label>手机号（含国家码）
+            <input id="login-phone" type="text" placeholder="+86 13800138000" />
+          </label>
+          <button id="btn-login-start" class="btn primary">发送验证码</button>
+        </div>
+
+        <div id="login-flow" class="login-flow hidden">
+          <div class="stage" id="stage-code">
+            <label>验证码（发到你已登录的 Telegram 客户端，不是短信）
+              <input id="login-code" type="text" inputmode="numeric" placeholder="12345" />
+            </label>
+            <button id="btn-login-code" class="btn">提交验证码</button>
+          </div>
+          <div class="stage hidden" id="stage-password">
+            <label>两步验证密码（2FA）
+              <input id="login-password" type="password" placeholder="••••••" />
+            </label>
+            <button id="btn-login-password" class="btn">提交密码</button>
+          </div>
+          <p id="login-status" class="status"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Upload -->
+    <section id="tab-upload" class="panel">
+      <div class="card">
+        <h2>上传文件到指定目标</h2>
+        <div class="form">
+          <label>账号
+            <select id="up-account"></select>
+          </label>
+
+          <label>目标（chat id / @用户名 / 留空 = Saved Messages）
+            <input id="up-target" type="text" placeholder="1202784229 或 @durov 或 留空" />
+          </label>
+
+          <label>从会话选择目标（会顺带缓存私有目标，便于按 id 上传）
+            <div class="row">
+              <select id="up-chats" class="grow"><option value="">（先点“加载会话”）</option></select>
+              <button id="btn-load-chats" class="btn">加载会话</button>
+            </div>
+          </label>
+
+          <label>话题 topic id（仅论坛群需要，可留空）
+            <input id="up-topic" type="number" min="0" placeholder="0" />
+          </label>
+
+          <label>路径（服务器本地的文件或目录的绝对路径）
+            <input id="up-path" type="text" placeholder="D:\path\to\file.mkv 或 一个目录" />
+          </label>
+
+          <label>caption（expr 表达式；留空=默认“文件名 - MIME”；空说明请填 <code>""</code>）
+            <input id="up-caption" type="text" placeholder='留空 / FileName / "自定义文本"' />
+          </label>
+
+          <div class="row wrap">
+            <label class="inline"><input id="up-photo" type="checkbox" /> 图片作为照片发送</label>
+            <label class="inline grow">仅含扩展名 <input id="up-includes" type="text" placeholder="mp4,mkv（逗号分隔，可空）" /></label>
+            <label class="inline grow">排除扩展名 <input id="up-excludes" type="text" placeholder="txt,nfo（与上面互斥）" /></label>
+          </div>
+
+          <button id="btn-upload" class="btn primary">上传</button>
+          <p id="upload-status" class="status"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tasks -->
+    <section id="tab-tasks" class="panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>上传任务</h2>
+          <span class="muted">每 2 秒自动刷新；详细进度条在运行服务的终端里</span>
+        </div>
+        <table class="tasks">
+          <thead>
+            <tr><th>ID</th><th>账号</th><th>目标</th><th>路径</th><th>状态</th><th>错误</th></tr>
+          </thead>
+          <tbody id="tasks-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

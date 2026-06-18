@@ -19,6 +19,7 @@ type iterElem struct {
 	thread  int
 
 	asPhoto bool
+	asFile  bool
 	remove  bool
 }
 
@@ -47,6 +48,10 @@ func (e *iterElem) Thread() int {
 
 func (e *iterElem) AsPhoto() bool {
 	return e.asPhoto
+}
+
+func (e *iterElem) AsFile() bool {
+	return e.asFile
 }
 
 type uploaderFile struct {
