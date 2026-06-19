@@ -1,9 +1,11 @@
 package downloader
 
 import (
+	"context"
 	"time"
 
 	"go.uber.org/atomic"
+	"golang.org/x/time/rate"
 )
 
 type Progress interface {
@@ -27,18 +29,35 @@ type writeAt struct {
 	partSize int
 
 	downloaded *atomic.Int64
+
+	// ctx and limiter throttle writes when a global rate limit is set. WriteAt
+	// is the single point every task's every part flows through, and rate.Limiter
+	// is safe for concurrent use, so a shared limiter here bounds the total rate.
+	// limiter is nil when unlimited.
+	ctx     context.Context
+	limiter *rate.Limiter
 }
 
-func newWriteAt(elem Elem, progress Progress, partSize int) *writeAt {
+func newWriteAt(ctx context.Context, elem Elem, progress Progress, partSize int, limiter *rate.Limiter) *writeAt {
 	return &writeAt{
 		elem:       elem,
 		progress:   progress,
 		partSize:   partSize,
 		downloaded: atomic.NewInt64(0),
+		ctx:        ctx,
+		limiter:    limiter,
 	}
 }
 
 func (w *writeAt) WriteAt(p []byte, off int64) (int, error) {
+	// Throttle before writing; len(p) <= partSize <= the limiter burst, so WaitN
+	// blocks for the right duration rather than erroring on an oversized request.
+	if w.limiter != nil {
+		if err := w.limiter.WaitN(w.ctx, len(p)); err != nil {
+			return 0, err
+		}
+	}
+
 	at, err := w.elem.To().WriteAt(p, off)
 	if err != nil {
 		return 0, err

@@ -18,6 +18,7 @@ import (
 	pw "github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/samber/lo"
 	"github.com/spf13/viper"
+	"golang.org/x/time/rate"
 
 	"github.com/iyear/tdl/core/uploader"
 	"github.com/iyear/tdl/core/util/tutil"
@@ -44,6 +45,7 @@ func runAlbum(
 	caption *vm.Program,
 	web uploader.Progress, // optional (web UI); nil for CLI
 	pww pw.Writer,
+	limiter *rate.Limiter, // optional global rate limit; nil means unlimited
 ) error {
 	var (
 		to  peers.Peer
@@ -65,7 +67,7 @@ func runAlbum(
 		if end > len(files) {
 			end = len(files)
 		}
-		if err := sendAlbumGroup(ctx, client, to, files[start:end], opts, caption, web, pww, threads); err != nil {
+		if err := sendAlbumGroup(ctx, client, to, files[start:end], opts, caption, web, pww, threads, limiter); err != nil {
 			return err
 		}
 	}
@@ -82,6 +84,7 @@ func sendAlbumGroup(
 	web uploader.Progress,
 	pww pw.Writer,
 	threads int,
+	limiter *rate.Limiter,
 ) (rerr error) {
 	// open the group's files (sequentially) and sum the bytes for progress
 	ufs := make([]*uploaderFile, 0, len(group))
@@ -131,7 +134,7 @@ func sendAlbumGroup(
 			caps = c
 		}
 
-		m, err := uploader.BuildMedia(ctx, up, uf, nil, opts.Photo, opts.AsFile, caps...)
+		m, err := uploader.BuildMedia(ctx, up, uf, nil, opts.Photo, opts.AsFile, limiter, caps...)
 		if err != nil {
 			return fail(errors.Wrap(err, "build media"))
 		}

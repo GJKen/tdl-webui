@@ -7,6 +7,7 @@ import (
 	"github.com/gotd/td/telegram/downloader"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/logctx"
@@ -25,6 +26,9 @@ type Options struct {
 	Threads  int
 	Iter     Iter
 	Progress Progress
+	// Limiter, when non-nil, caps the download write throughput. It is shared by
+	// every task and part so the limit is global. Nil means unlimited.
+	Limiter *rate.Limiter
 }
 
 func New(opts Options) *Downloader {
@@ -88,7 +92,7 @@ func (d *Downloader) download(ctx context.Context, elem Elem) error {
 	_, err := downloader.NewDownloader().WithPartSize(MaxPartSize).
 		Download(client, elem.File().Location()).
 		WithThreads(tutil.BestThreads(elem.File().Size(), d.opts.Threads)).
-		Parallel(ctx, newWriteAt(elem, d.opts.Progress, MaxPartSize))
+		Parallel(ctx, newWriteAt(ctx, elem, d.opts.Progress, MaxPartSize, d.opts.Limiter))
 	if err != nil {
 		return errors.Wrap(err, "download")
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/samber/lo"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 
 	"github.com/iyear/tdl/core/util/fsutil"
 	"github.com/iyear/tdl/core/util/mediautil"
@@ -31,6 +32,9 @@ type Options struct {
 	Threads  int
 	Iter     Iter
 	Progress Progress
+	// Limiter, when non-nil, caps the upload read throughput. It is shared by
+	// every file in the batch so the limit is global. Nil means unlimited.
+	Limiter *rate.Limiter
 }
 
 func New(o Options) *Uploader {
@@ -103,7 +107,7 @@ func (u *Uploader) upload(ctx context.Context, elem Elem) error {
 		thumb = t
 	}
 
-	media, err := BuildMedia(ctx, up, elem.File(), thumb, elem.AsPhoto(), elem.AsFile(), caption)
+	media, err := BuildMedia(ctx, up, elem.File(), thumb, elem.AsPhoto(), elem.AsFile(), u.opts.Limiter, caption)
 	if err != nil {
 		return err
 	}
@@ -125,8 +129,19 @@ func (u *Uploader) upload(ctx context.Context, elem Elem) error {
 // the content is detected as image+asPhoto / video / audio. The returned option
 // satisfies both MediaOption (single send) and MultiMediaOption (albums), so it
 // is reusable by the per-file path and the album path.
-func BuildMedia(ctx context.Context, up *uploader.Uploader, file, thumb File, asPhoto, asFile bool, caption ...message.StyledTextOption) (message.MultiMediaOption, error) {
-	f, err := up.Upload(ctx, uploader.NewUpload(file.Name(), file, file.Size()))
+//
+// limiter, when non-nil, throttles the bytes read from file while uploading; nil
+// uploads at full speed. gotd reads the upload source sequentially (one reader
+// goroutine, parallel senders), so throttling reads bounds the overall rate.
+func BuildMedia(ctx context.Context, up *uploader.Uploader, file, thumb File, asPhoto, asFile bool, limiter *rate.Limiter, caption ...message.StyledTextOption) (message.MultiMediaOption, error) {
+	// Throttle only when a limiter is set; otherwise hand gotd the original file
+	// untouched so nothing about the default (unlimited) path changes.
+	var src io.Reader = file
+	if limiter != nil {
+		src = &rateLimitedReader{ctx: ctx, r: file, limiter: limiter}
+	}
+
+	f, err := up.Upload(ctx, uploader.NewUpload(file.Name(), src, file.Size()))
 	if err != nil {
 		return nil, errors.Wrap(err, "upload file")
 	}
@@ -174,4 +189,23 @@ func BuildMedia(ctx context.Context, up *uploader.Uploader, file, thumb File, as
 	}
 
 	return media, nil
+}
+
+// rateLimitedReader throttles reads from the wrapped reader using a shared
+// rate.Limiter. It waits for the bytes actually read on each Read; the limiter's
+// burst is sized (>= one part) by the caller so WaitN never rejects a full part.
+type rateLimitedReader struct {
+	ctx     context.Context
+	r       io.Reader
+	limiter *rate.Limiter
+}
+
+func (rr *rateLimitedReader) Read(p []byte) (int, error) {
+	n, err := rr.r.Read(p)
+	if n > 0 {
+		if werr := rr.limiter.WaitN(rr.ctx, n); werr != nil && err == nil {
+			err = werr
+		}
+	}
+	return n, err
 }

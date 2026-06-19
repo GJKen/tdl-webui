@@ -121,13 +121,26 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		prog.EnablePS(ctx, upProgress)
 	}
 
+	rate, err := utils.Byte.Parse(viper.GetString(consts.FlagRate))
+	if err != nil {
+		return errors.Wrap(err, "parse rate")
+	}
+	limiter := utils.NewRateLimiter(rate)
+
+	logctx.From(ctx).Info("Start upload",
+		zap.Int("files", len(files)),
+		zap.Int("threads", viper.GetInt(consts.FlagThreads)),
+		zap.Int("limit", viper.GetInt(consts.FlagLimit)),
+		zap.Bool("album", opts.Album),
+		zap.Int64("rate", rate))
+
 	// Album mode: send the files as Telegram media group(s) (one grouped message
 	// per <=10 files) instead of one message per file. Handled separately from
 	// the per-file uploader iterator path.
 	if opts.Album {
 		go upProgress.Render()
 		defer prog.Wait(ctx, upProgress)
-		return runAlbum(ctx, pool.Default(ctx), manager, files, opts, caption, opts.Progress, upProgress)
+		return runAlbum(ctx, pool.Default(ctx), manager, files, opts, caption, opts.Progress, upProgress, limiter)
 	}
 
 	// terminal progress always renders; an optional extra sink (e.g. web) is
@@ -142,6 +155,7 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		Threads:  viper.GetInt(consts.FlagThreads),
 		Iter:     newIter(files, to, caption, opts.Chat, opts.Thread, opts.Photo, opts.AsFile, opts.Remove, viper.GetDuration(consts.FlagDelay), manager),
 		Progress: progress,
+		Limiter:  limiter,
 	}
 
 	up := uploader.New(options)

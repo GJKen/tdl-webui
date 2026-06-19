@@ -163,6 +163,7 @@ func New() *cobra.Command {
 	cmd.PersistentFlags().IntP(consts.FlagLimit, "l", 2, "max number of concurrent tasks")
 	cmd.PersistentFlags().Int(consts.FlagPoolSize, 8, "specify the size of the DC pool, zero means infinity")
 	cmd.PersistentFlags().Duration(consts.FlagDelay, 0, "delay between each task, zero means no delay")
+	cmd.PersistentFlags().String(consts.FlagRate, "", "global transfer bandwidth limit shared by all tasks, e.g. 10M, 500K, 2.5MB; empty means unlimited")
 
 	cmd.PersistentFlags().String(consts.FlagNTP, "", "ntp server host, if not set, use system time")
 	cmd.PersistentFlags().Duration(consts.FlagReconnectTimeout, 5*time.Minute, "Telegram client reconnection backoff timeout, infinite if set to 0") // #158

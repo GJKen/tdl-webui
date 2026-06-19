@@ -103,11 +103,17 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		prog.EnablePS(ctx, dlProgress)
 	}
 
+	rate, err := utils.Byte.Parse(viper.GetString(consts.FlagRate))
+	if err != nil {
+		return errors.Wrap(err, "parse rate")
+	}
+
 	options := downloader.Options{
 		Pool:     pool,
 		Threads:  viper.GetInt(consts.FlagThreads),
 		Iter:     it,
 		Progress: newProgress(dlProgress, it, opts),
+		Limiter:  utils.NewRateLimiter(rate),
 	}
 	limit := viper.GetInt(consts.FlagLimit)
 
@@ -116,7 +122,8 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		zap.Bool("rewrite_ext", opts.RewriteExt),
 		zap.Bool("skip_same", opts.SkipSame),
 		zap.Int("threads", options.Threads),
-		zap.Int("limit", limit))
+		zap.Int("limit", limit),
+		zap.Int64("rate", rate))
 
 	color.Green("All files will be downloaded to '%s' dir", opts.Dir)
 
