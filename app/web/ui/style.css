@@ -275,7 +275,7 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
   border-radius: 12px; overflow: hidden;
   position: relative;
 }
-.chat-list-head { padding: 10px; border-bottom: 1px solid var(--border); }
+.chat-list-head { padding: 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
 .chat-search {
   display: flex; align-items: center; gap: 8px;
   background: var(--bg); border: 1px solid var(--border);
@@ -285,6 +285,23 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 .chat-search .search-ic { color: var(--muted); font-size: 13px; }
 .chat-search input { border: none; background: transparent; padding: 0; border-radius: 0; }
 .chat-search input:focus { border: none; }
+.chat-folders {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.chat-folders::-webkit-scrollbar { display: none; }
+.chat-folders.hidden { display: none; }
+.folder-chip {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; max-width: 150px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--muted); font-size: 12px;
+  white-space: nowrap; cursor: pointer;
+}
+.folder-chip:hover { border-color: var(--accent); color: var(--fg); }
+.folder-chip.active { background: rgba(59,130,246,.16); border-color: var(--accent); color: var(--accent); }
+.folder-chip-label { overflow: hidden; text-overflow: ellipsis; }
+.folder-chip-count { color: var(--muted); font-size: 11px; }
 
 .chat-items { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .chat-row {
@@ -304,7 +321,35 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 .chat-row-sub .sub-nick { color: var(--accent); }
 .chat-empty { color: var(--muted); font-size: 13px; padding: 16px 10px; text-align: center; line-height: 1.6; }
 
-.chat-list-foot { padding: 8px; border-top: 1px solid var(--border); }
+.chat-list-foot { padding: 8px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+.chat-list-foot .foot-icon { flex: 0 0 38px; width: 38px; height: 36px; padding: 0; text-align: center; }
+.settings-icon { display: inline-flex; align-items: center; justify-content: center; }
+.settings-icon svg {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  flex: none;
+  display: block;
+  fill: currentColor;
+}
+.set-hint { margin: 6px 0 2px; font-size: 12px; line-height: 1.5; }
+.set-proxy-label { font-size: 13px; margin-bottom: 6px; }
+.proxy-scheme { display: flex; gap: 16px; margin-bottom: 8px; }
+.proxy-scheme .inline { width: auto; }
+/* override the generic input[type=number] width:100% (higher specificity) so the
+   port box stays narrow instead of stretching the row past the modal */
+.set-proxy input.proxy-port { width: 92px; flex: none; }
+.set-proxy input.proxy-port {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.set-proxy input.proxy-port::-webkit-outer-spin-button,
+.set-proxy input.proxy-port::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.set-proxy input#set-proxy-host { min-width: 0; }
+.set-proxy .composer-row { flex-wrap: nowrap; }
 
 /* back-to-top button for the conversation list (bottom-right, shown after scroll) */
 .to-top {
@@ -449,6 +494,9 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 /* album mode: per-file photo/file choice doesn't apply (auto-detected) */
 .send-files.album-mode .send-file select { display: none; }
 .album-toggle { margin-bottom: 12px; font-size: 13px; color: var(--text); }
+/* send dialog actions: "＋ 添加文件" on the left, 取消/发送 on the right */
+.send-actions { justify-content: space-between; }
+.send-actions-right { display: flex; gap: 8px; }
 
 /* send preview: mock of the resulting message bubble(s) */
 .send-preview-label { font-size: 12px; margin: 4px 0 6px; }

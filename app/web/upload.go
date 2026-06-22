@@ -399,6 +399,9 @@ func (s *Server) handleUploadAlbum(w http.ResponseWriter, r *http.Request) {
 // (staged browser bytes, if any) once it finishes.
 func (s *Server) startUpload(lc *liveClient, task *Task, opts up.Options, cleanupDir string) {
 	opts.Progress = &webProgress{tasks: s.tasks, id: task.ID}
+	// Hand every upload the shared, live-adjustable limiter so the web rate
+	// setting applies (and a rate change retunes in-flight transfers too).
+	opts.Limiter = s.settings.Limiter()
 
 	// A per-task cancelable context (derived from the account's live context) so
 	// a single upload can be canceled — even while queued behind another.

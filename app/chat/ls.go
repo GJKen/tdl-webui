@@ -29,9 +29,13 @@ import (
 type Dialog struct {
 	ID          int64   `json:"id" comment:"ID of dialog"`
 	Type        string  `json:"type" comment:"Type of dialog. Can be 'private', 'channel' or 'group'"`
+	PeerKind    string  `json:"peer_kind,omitempty" comment:"Raw peer kind: user, chat or channel"`
 	VisibleName string  `json:"visible_name,omitempty" comment:"Title of channel and group, first and last name of user. If empty, output '-'"`
 	Username    string  `json:"username,omitempty" comment:"Username of dialog. If empty, output '-'"`
 	Bot         bool    `json:"bot,omitempty" comment:"Whether a private peer is a bot (only meaningful when Type=='private')"`
+	Contact     bool    `json:"contact,omitempty" comment:"Whether a private peer is a contact"`
+	Archived    bool    `json:"archived,omitempty" comment:"Whether the dialog is archived"`
+	FolderIDs   []int   `json:"folder_ids,omitempty" comment:"Telegram custom folder IDs containing this dialog"`
 	Topics      []Topic `json:"topics,omitempty" comment:"Topics of dialog. If not set, output '-'"`
 	// SendForbidden reports whether the current account is forbidden to send
 	// media to this dialog, computed from the rights carried in the dialog
@@ -44,6 +48,19 @@ type Dialog struct {
 type Topic struct {
 	ID    int    `json:"id" comment:"ID of topic"`
 	Title string `json:"title" comment:"Title of topic"`
+}
+
+type DialogFolder struct {
+	ID          int          `json:"id"`
+	Title       string       `json:"title"`
+	Emoticon    string       `json:"emoticon,omitempty"`
+	Color       int          `json:"color,omitempty"`
+	PinnedPeers []FolderPeer `json:"pinned_peers,omitempty"`
+}
+
+type FolderPeer struct {
+	PeerKind string `json:"peer_kind"`
+	ID       int64  `json:"id"`
 }
 
 // ListOutput
@@ -162,6 +179,9 @@ func ListDialogs(ctx context.Context, c *telegram.Client, kvd storage.Storage, f
 		if r == nil {
 			continue
 		}
+		if raw, ok := d.Dialog.(*tg.Dialog); ok {
+			r.Archived = dialogArchived(raw)
+		}
 
 		// filter
 		b, err := texpr.Run(filter, r)
@@ -233,10 +253,12 @@ func processUser(id int64, entities peer.Entities) *Dialog {
 
 	return &Dialog{
 		ID:          u.ID,
+		PeerKind:    peerKindUser,
 		VisibleName: visibleName(u.FirstName, u.LastName),
 		Username:    u.Username,
 		Type:        DialogPrivate,
 		Bot:         u.Bot,
+		Contact:     u.Contact,
 		Topics:      nil,
 	}
 }
@@ -249,6 +271,7 @@ func processChannel(ctx context.Context, api *tg.Client, id int64, entities peer
 
 	d := &Dialog{
 		ID:          c.ID,
+		PeerKind:    peerKindChannel,
 		VisibleName: c.Title,
 		Username:    c.Username,
 	}
@@ -374,6 +397,7 @@ func processChat(id int64, entities peer.Entities) *Dialog {
 
 	d := &Dialog{
 		ID:          c.ID,
+		PeerKind:    peerKindChat,
 		VisibleName: c.Title,
 		Username:    "-",
 		Type:        DialogGroup,

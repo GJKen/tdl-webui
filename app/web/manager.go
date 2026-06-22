@@ -85,6 +85,19 @@ func (m *ClientManager) Close() {
 	m.clients = make(map[string]*liveClient)
 }
 
+// DropAll stops every live client and clears the map so the next Get for each
+// account reconnects from scratch. Used after a proxy change so all accounts
+// re-dial through the new proxy. Unlike Close, the manager stays usable.
+func (m *ClientManager) DropAll() {
+	m.mu.Lock()
+	old := m.clients
+	m.clients = make(map[string]*liveClient)
+	m.mu.Unlock()
+	for _, lc := range old {
+		lc.stop()
+	}
+}
+
 // liveClient is a single account's persistent connection.
 type liveClient struct {
 	ns string

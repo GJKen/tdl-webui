@@ -18,8 +18,9 @@ import (
 // chatsCache is the dialog list persisted in the namespace KV so the target
 // picker survives server restarts without a fresh Telegram fetch.
 type chatsCache struct {
-	UpdatedAt string         `json:"updated_at"`
-	Dialogs   []*chat.Dialog `json:"dialogs"`
+	UpdatedAt string               `json:"updated_at"`
+	Dialogs   []*chat.Dialog       `json:"dialogs"`
+	Folders   []*chat.DialogFolder `json:"folders,omitempty"`
 }
 
 // handleChats serves the account's dialogs for the target picker.
@@ -91,7 +92,12 @@ func (s *Server) handleChats(w http.ResponseWriter, r *http.Request) {
 		}
 		d = dropSelfDialog(d, sid)
 
-		resp = chatsCache{UpdatedAt: time.Now().Format(time.RFC3339), Dialogs: d}
+		folders, err := chat.ListDialogFolders(ctx, c.API(), d)
+		if err != nil {
+			return err
+		}
+
+		resp = chatsCache{UpdatedAt: time.Now().Format(time.RFC3339), Dialogs: d, Folders: folders}
 		// best-effort persist for the next startup, on the same serialized op
 		if b, mErr := json.Marshal(resp); mErr == nil {
 			_ = kvd.Set(ctx, key.WebChats(), b)

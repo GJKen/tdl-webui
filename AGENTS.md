@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 本项目是 `tdl`（Telegram CLI 工具）的自建分支，主要新增了网页版（web UI）。
 

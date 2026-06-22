@@ -449,9 +449,11 @@ $("btn-login-password").onclick = async () => {
 // State: the conversation list (cached, per namespace), the global task list,
 // and which conversation window is open.
 let chats = [];          // normal conversations from the /chats cache (Dialog[])
+let chatFolders = [];    // Telegram custom folders from the /chats cache
 let allTasks = [];       // global task list from /tasks (all accounts)
 let selectedChat = null; // the open conversation, or null
 let chatSearch = "";
+let activeFolder = "all";
 
 function splitExts(s) {
   return s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -475,19 +477,6 @@ function initialOf(name) {
 function setAvatar(el, name, colorKey) {
   el.textContent = initialOf(name);
   el.style.background = avatarColor(colorKey);
-}
-
-// --- pins (per account, in localStorage) ---
-function pinsKey() { return "tdl_pins:" + (currentNs || ""); }
-function getPins() {
-  try { return JSON.parse(localStorage.getItem(pinsKey()) || "[]"); } catch (_) { return []; }
-}
-function isPinned(id) { return getPins().includes(String(id)); }
-function togglePin(id) {
-  const pins = getPins();
-  const i = pins.indexOf(String(id));
-  if (i >= 0) pins.splice(i, 1); else pins.unshift(String(id));
-  localStorage.setItem(pinsKey(), JSON.stringify(pins));
 }
 
 // the display name of an account (alias > Telegram nickname > namespace)
@@ -540,6 +529,16 @@ function chatColorKey(c) {
   if (c.kind === "saved") return "saved:" + c.ns;
   return "chat:" + c.id;
 }
+function chatPeerKind(c) {
+  if (!c) return "";
+  if (c.peer_kind) return c.peer_kind;
+  switch (c.type) {
+    case "private": return "user";
+    case "channel": return "channel";
+    case "group": return "chat";
+    default: return "";
+  }
+}
 function savedEntry() {
   return { kind: "saved", ns: currentNs, id: 0, type: "saved", visible_name: "Saved Messages" };
 }
@@ -583,14 +582,72 @@ function typeLabel(c) {
   }
 }
 
+function folderKey(f) {
+  return "f:" + f.id;
+}
+function folderLabel(f) {
+  return ((f.emoticon || "") + " " + (f.title || ("分组 " + f.id))).trim();
+}
+function setChatsResponse(data) {
+  chats = ((data && data.dialogs) || []).map((d) => Object.assign({ kind: "normal" }, d));
+  chatFolders = ((data && data.folders) || []).filter((f) => f && f.id != null);
+  if (activeFolder !== "all" && !chatFolders.some((f) => folderKey(f) === activeFolder)) {
+    activeFolder = "all";
+  }
+  listSig = null;
+  folderSig = null;
+}
+function chatMatchesFolder(c) {
+  if (activeFolder === "all") return true;
+  if (!c || c.kind !== "normal") return false;
+  const id = activeFolder.slice(2);
+  return ((c.folder_ids || []).map(String)).includes(id);
+}
+function folderChatCount(folderID) {
+  const id = String(folderID);
+  return chats.filter((c) => ((c.folder_ids || []).map(String)).includes(id)).length;
+}
+function activeFolderObj() {
+  if (activeFolder === "all") return null;
+  const id = activeFolder.slice(2);
+  return chatFolders.find((f) => String(f.id) === id) || null;
+}
+function activeFolderPinRank(c) {
+  if (!c || c.kind !== "normal") return -1;
+  const f = activeFolderObj();
+  if (!f || !f.pinned_peers || !f.pinned_peers.length) return -1;
+  const kind = chatPeerKind(c);
+  for (let i = 0; i < f.pinned_peers.length; i++) {
+    const p = f.pinned_peers[i];
+    if (String(p.id) === String(c.id) && String(p.peer_kind || "") === kind) return i;
+  }
+  return -1;
+}
+function isChatPinnedInView(c) {
+  if (!c || c.kind !== "normal") return false;
+  return activeFolderPinRank(c) >= 0;
+}
+
 // --- load conversations (cached, per namespace) ---
 async function loadChats(ns) {
-  if (!ns) { chats = []; renderChatList(); return; }
+  if (!ns) {
+    chats = [];
+    chatFolders = [];
+    activeFolder = "all";
+    listSig = null;
+    folderSig = null;
+    renderChatList();
+    return;
+  }
   try {
     const data = await api("GET", `/accounts/${encodeURIComponent(ns)}/chats`);
-    chats = ((data && data.dialogs) || []).map((d) => Object.assign({ kind: "normal" }, d));
+    setChatsResponse(data);
   } catch (_) {
     chats = [];
+    chatFolders = [];
+    activeFolder = "all";
+    listSig = null;
+    folderSig = null;
   }
   renderChatList();
 }
@@ -604,7 +661,7 @@ async function refreshChats() {
   btn.disabled = true; btn.textContent = "拉取中…";
   try {
     const data = await api("GET", `/accounts/${encodeURIComponent(ns)}/chats?refresh=1`);
-    chats = ((data && data.dialogs) || []).map((d) => Object.assign({ kind: "normal" }, d));
+    setChatsResponse(data);
     renderChatList();
   } catch (e) {
     showAlert("加载会话失败", e.message);
@@ -615,6 +672,95 @@ async function refreshChats() {
 $("btn-refresh-chats").onclick = refreshChats;
 $("cw-refresh").onclick = refreshChats;
 
+// --- settings modal (server-global upload rate + proxy) ---
+
+// proxy is stored as a URL ("socks5://host:port"); the UI splits it into a
+// scheme radio + host + port. parseProxy fills the fields from a stored URL.
+function parseProxy(url) {
+  let scheme = "socks5", host = "", port = "";
+  const m = /^(socks5|http)?:?\/?\/?([^:]*)(?::(\d+))?$/i.exec((url || "").trim());
+  if (m) {
+    if (m[1]) scheme = m[1].toLowerCase();
+    host = m[2] || "";
+    port = m[3] || "";
+  }
+  $("proxy-socks5").checked = scheme !== "http";
+  $("proxy-http").checked = scheme === "http";
+  $("set-proxy-host").value = host;
+  $("set-proxy-port").value = port;
+}
+
+// buildProxy assembles the stored URL from the fields; empty host = direct ("").
+function buildProxy() {
+  const host = $("set-proxy-host").value.trim();
+  if (!host) return "";
+  const scheme = $("proxy-http").checked ? "http" : "socks5";
+  const port = $("set-proxy-port").value.trim();
+  return scheme + "://" + host + (port ? ":" + port : "");
+}
+
+async function openSettings() {
+  setStatus($("settings-status"), "");
+  $("set-rate").value = "";
+  parseProxy("");
+  $("settings-modal").classList.add("open");
+  try {
+    const s = await api("GET", "/settings");
+    $("set-rate").value = (s && s.rate) || "";
+    parseProxy((s && s.proxy) || "");
+  } catch (e) {
+    setStatus($("settings-status"), "读取设置失败：" + e.message, "err");
+  }
+  setTimeout(() => $("set-rate").focus(), 30);
+}
+function closeSettings() { $("settings-modal").classList.remove("open"); }
+
+async function saveSettings() {
+  const btn = $("settings-save");
+  btn.disabled = true;
+  setStatus($("settings-status"), "保存中…");
+  try {
+    const res = await api("PUT", "/settings", {
+      rate: $("set-rate").value.trim(),
+      proxy: buildProxy(),
+    });
+    closeSettings();
+    if (res && res.proxy_changed) showAlert("代理已更新", "已切换代理并重连所有账号，下次操作生效。");
+  } catch (e) {
+    setStatus($("settings-status"), "保存失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("btn-settings").onclick = openSettings;
+$("settings-close").onclick = closeSettings;
+$("settings-cancel").onclick = closeSettings;
+$("settings-save").onclick = saveSettings;
+
+// test the currently-entered proxy (no need to save first)
+async function testProxy() {
+  const btn = $("proxy-test");
+  const host = $("set-proxy-host").value.trim();
+  btn.disabled = true;
+  setStatus($("settings-status"), host ? "正在通过代理连接 Telegram…" : "正在测试直连 Telegram…");
+  try {
+    const res = await api("POST", "/settings/proxy-test", { proxy: buildProxy() });
+    if (res && res.ok) setStatus($("settings-status"), "✓ 可用：成功连接到 Telegram", "ok");
+    else setStatus($("settings-status"), "✗ 不可用：" + ((res && res.error) || "连接失败"), "err");
+  } catch (e) {
+    setStatus($("settings-status"), "✗ 测试失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("proxy-test").onclick = testProxy;
+$("settings-modal").addEventListener("click", (e) => { if (e.target === $("settings-modal")) closeSettings(); });
+$("settings-modal").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); closeSettings(); }
+  else if (e.key === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); saveSettings(); }
+});
+
 // back-to-top button: show after the conversation list scrolls down a bit
 const chatItemsEl = $("chat-items"), chatToTop = $("chat-totop");
 chatItemsEl.addEventListener("scroll", () => {
@@ -624,6 +770,13 @@ chatToTop.onclick = () => chatItemsEl.scrollTo({ top: 0, behavior: "smooth" });
 
 // --- search (filters the cached conversation list) ---
 $("chat-search").addEventListener("input", (e) => { chatSearch = e.target.value.trim(); renderChatList(); });
+$("chat-folders").addEventListener("wheel", (e) => {
+  const el = $("chat-folders");
+  if (el.classList.contains("hidden")) return;
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  e.preventDefault();
+  el.scrollLeft += e.deltaY;
+}, { passive: false });
 
 function chatMatchesSearch(c, q) {
   if (!q) return true;
@@ -662,9 +815,48 @@ function receivedChats() {
 }
 
 let listSig = null;
+let folderSig = null;
+
+function renderFolderBar() {
+  const bar = $("chat-folders");
+  if (!currentNs || !chatFolders.length) {
+    if (activeFolder !== "all") activeFolder = "all";
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    folderSig = "";
+    return;
+  }
+
+  const sig = currentNs + "|" + activeFolder + "|" + chatFolders.map((f) => {
+    return f.id + ":" + folderLabel(f) + ":" + folderChatCount(f.id);
+  }).join(",");
+  if (sig === folderSig) return;
+  folderSig = sig;
+
+  bar.classList.remove("hidden");
+  bar.innerHTML = "";
+
+  const make = (key, label, count) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "folder-chip" + (activeFolder === key ? " active" : "");
+    b.title = label;
+    b.innerHTML = `<span class="folder-chip-label">${escapeHtml(label)}</span><span class="folder-chip-count">${count}</span>`;
+    b.onclick = () => {
+      activeFolder = key;
+      listSig = null;
+      renderChatList();
+    };
+    return b;
+  };
+
+  bar.appendChild(make("all", "全部", chats.length + 1));
+  chatFolders.forEach((f) => bar.appendChild(make(folderKey(f), folderLabel(f), folderChatCount(f.id))));
+}
 
 function renderChatList() {
   const list = $("chat-items");
+  renderFolderBar();
 
   // build the ordered set first, or an empty-state message
   let ordered = null, emptyMsg = null;
@@ -673,11 +865,15 @@ function renderChatList() {
   } else {
     const q = chatSearch;
     const all = chats.concat(receivedChats());
-    const items = all.filter((c) => chatMatchesSearch(c, q));
-    // sort: pinned first, then by last-sent time desc, then by name
+    const items = all.filter((c) => chatMatchesFolder(c) && chatMatchesSearch(c, q));
+    // sort: Telegram folder pins first, then by last-sent time desc, then by name
     items.sort((a, b) => {
-      const pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
-      if (pa !== pb) return pb - pa;
+      const fa = activeFolderPinRank(a), fb = activeFolderPinRank(b);
+      if (fa !== fb) {
+        if (fa >= 0 && fb >= 0) return fa - fb;
+        if (fa >= 0) return -1;
+        if (fb >= 0) return 1;
+      }
       const ta = lastTaskForChat(a), tb = lastTaskForChat(b);
       const da = ta ? new Date(ta.created_at).getTime() : 0;
       const db = tb ? new Date(tb.created_at).getTime() : 0;
@@ -686,10 +882,11 @@ function renderChatList() {
     });
 
     ordered = [];
-    if (!q || "saved messages 收藏夹".includes(q.toLowerCase())) ordered.push(savedEntry()); // pinned to top
+    if (activeFolder === "all" && (!q || "saved messages 收藏夹".includes(q.toLowerCase()))) ordered.push(savedEntry()); // pinned to top
     ordered.push(...items);
     if (!ordered.length) {
-      emptyMsg = all.length ? "没有匹配的会话" : "还没有会话缓存<br>点下方“刷新会话列表”拉取";
+      if (activeFolder !== "all") emptyMsg = q ? "该分组没有匹配的会话" : "该分组没有会话";
+      else emptyMsg = all.length ? "没有匹配的会话" : "还没有会话缓存<br>点下方“刷新会话列表”拉取";
       ordered = null;
     }
   }
@@ -702,10 +899,10 @@ function renderChatList() {
   if (emptyMsg !== null) {
     sig = "empty:" + emptyMsg;
   } else {
-    sig = currentNs + "|" + chatSearch + "|" + selKey + "|" + ordered.map((c) => {
+    sig = currentNs + "|" + chatSearch + "|" + activeFolder + "|" + selKey + "|" + ordered.map((c) => {
       const last = lastTaskForChat(c);
-      const pinned = c.kind === "normal" && isPinned(c.id) ? 1 : 0;
-      return chatKey(c) + ":" + (c.visible_name || "") + ":" + pinned + ":" + (last ? last.id + last.namespace : "");
+      const pinned = c.kind === "normal" && isChatPinnedInView(c) ? 1 : 0;
+      return chatKey(c) + ":" + (c.visible_name || "") + ":" + pinned + ":" + activeFolderPinRank(c) + ":" + ((c.folder_ids || []).join(".")) + ":" + (last ? last.id + last.namespace : "");
     }).join(",");
   }
   if (sig === listSig) return;
@@ -739,7 +936,7 @@ function chatRow(c) {
   top.className = "chat-row-top";
   const name = document.createElement("span");
   name.className = "chat-row-name";
-  const pinned = c.kind === "normal" && isPinned(c.id);
+  const pinned = c.kind === "normal" && isChatPinnedInView(c);
   name.innerHTML = (pinned ? "<span class='pin'>📌</span>" : "") + escapeHtml(c.visible_name || c.username || String(c.id));
   const time = document.createElement("span");
   time.className = "chat-row-time";
@@ -822,7 +1019,11 @@ function renderHistory() {
   // structural signature (everything that affects the DOM except live upload %).
   // When only progress changed we update the rings in place and return, so a 1s
   // poll doesn't blow away the nodes you're inspecting in F12.
-  const sig = chatKey(c) + "|" + ts.map((t) => `${t.id}:${t.status}:${t.namespace}:${taskFileName(t)}:${t.caption || ""}`).join(",");
+  // currentNs is part of the key because left/right (out = t.namespace===currentNs)
+  // depends on it: a shared group/channel has the same chatKey for every account,
+  // so without currentNs, switching accounts on such a conversation would keep the
+  // stale alignment (an in-flight bubble stuck on the wrong side until it finishes).
+  const sig = currentNs + "|" + chatKey(c) + "|" + ts.map((t) => `${t.id}:${t.status}:${t.namespace}:${taskFileName(t)}:${t.caption || ""}`).join(",");
   if (sig === histSig) {
     ts.forEach((t) => { if (t.status === "running" || t.status === "queued") updateRing(t); });
     return;
@@ -1088,6 +1289,27 @@ function collectFiles(fileList) {
   openSendDialog();
 }
 
+// addMoreFiles appends to the open dialog's list (the "＋ 添加文件" button) instead
+// of replacing it like collectFiles. Skips files already in the list (same
+// name+size+lastModified) so re-picking the same file doesn't duplicate it.
+function addMoreFiles(fileList) {
+  const incoming = [...fileList];
+  if (!incoming.length) return;
+  const seen = new Set(pendingFiles.map((it) => it.file.name + "|" + it.file.size + "|" + it.file.lastModified));
+  let added = 0;
+  incoming.forEach((f) => {
+    const key = f.name + "|" + f.size + "|" + f.lastModified;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const kind = fileKind(f);
+    pendingFiles.push({ file: f, kind, mode: kind === "other" ? "file" : "media" });
+    added++;
+  });
+  if (!added) return;
+  renderSendFiles();
+  refreshSendOptionsUI(); // re-evaluate album conflict + preview; keeps current toggle choices
+}
+
 const MEDIA_LABEL = { image: "照片", video: "视频", audio: "音频" };
 
 // albumCategory groups a pending file by what kind of Telegram media group it can
@@ -1266,6 +1488,10 @@ $("send-album").addEventListener("change", refreshSendOptionsUI);
 $("send-asfile").addEventListener("change", refreshSendOptionsUI);
 $("send-caption").addEventListener("input", renderSendPreview);
 
+// "＋ 添加文件": pick more files and append them to the current list
+$("send-add").onclick = () => $("send-add-file").click();
+$("send-add-file").addEventListener("change", (e) => { addMoreFiles(e.target.files); e.target.value = ""; });
+
 $("send-go").onclick = async () => {
   const ns = currentNs, c = selectedChat;
   const status = $("send-status");
@@ -1391,7 +1617,6 @@ function openChatCtx(e, c) {
     chatCtx.appendChild(b);
   };
   if (c.kind === "normal") {
-    add(isPinned(c.id) ? "取消置顶" : "置顶", () => { togglePin(c.id); renderChatList(); });
     add("复制 ID", () => {
       if (navigator.clipboard) navigator.clipboard.writeText(String(c.id)).catch(() => showAlert("ID", String(c.id)));
       else showAlert("ID", String(c.id));

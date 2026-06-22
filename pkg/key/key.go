@@ -38,3 +38,14 @@ func WebSelf() string {
 func WebChats() string {
 	return keygen.New("web", "chats")
 }
+
+// WebRate and WebProxy are server-global web UI settings (upload rate limit and
+// proxy), stored under a reserved settings namespace — not a real account — so
+// they persist across restarts.
+func WebRate() string {
+	return keygen.New("web", "rate")
+}
+
+func WebProxy() string {
+	return keygen.New("web", "proxy")
+}
