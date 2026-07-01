@@ -556,3 +556,17 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
 }
 .ctx-menu button:hover { background: var(--card); }
 .ctx-menu button.danger:hover { color: var(--err); }
+
+/* settings tabs: 代理·限速 | 数据备份（复用登录 tab 风格） */
+.settings-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px;
+}
+.settings-tab {
+  flex: 1; padding: 8px 0; border: none; border-radius: 7px;
+  background: transparent; color: var(--muted);
+  font-size: 13px; cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { background: var(--accent-2); color: #fff; }
