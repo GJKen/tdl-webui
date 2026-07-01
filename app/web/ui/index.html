@@ -168,45 +168,57 @@
     </div>
   </div>
 
-  <!-- Settings modal: server-global upload rate limit + proxy -->
+  <!-- Settings modal: tabs for [代理·限速] and [数据备份] -->
   <div id="settings-modal" class="modal-overlay">
     <div class="modal">
       <div class="modal-head">
         <h2>设置</h2>
         <button id="settings-close" class="icon-btn" title="关闭">✕</button>
       </div>
-      <label>上传速率限制（留空 = 不限速；1024 进制，如 5M、500K、2.5MB）
-        <input id="set-rate" type="text" placeholder="留空 = 不限速" />
-      </label>
-      <label class="muted">下载速率限制（网页版暂未实现下载，此项当前无效）
-        <input id="set-rate-dl" type="text" placeholder="暂未实现" disabled />
-      </label>
-      <div class="set-proxy">
-        <div class="set-proxy-label">代理（地址留空 = 直连）</div>
-        <div class="proxy-scheme">
-          <label class="inline"><input type="radio" name="proxy-scheme" id="proxy-socks5" value="socks5" checked /> socks5</label>
-          <label class="inline"><input type="radio" name="proxy-scheme" id="proxy-http" value="http" /> http</label>
+
+      <div class="settings-tabs">
+        <button type="button" class="settings-tab active" data-stab="proxy">代理 · 限速</button>
+        <button type="button" class="settings-tab" data-stab="backup">数据备份</button>
+      </div>
+
+      <div class="settings-pane" id="spane-proxy">
+        <label>上传速率限制（留空 = 不限速；1024 进制，如 5M、500K、2.5MB）
+          <input id="set-rate" type="text" placeholder="留空 = 不限速" />
+        </label>
+        <label class="muted">下载速率限制（网页版暂未实现下载，此项当前无效）
+          <input id="set-rate-dl" type="text" placeholder="暂未实现" disabled />
+        </label>
+        <div class="set-proxy">
+          <div class="set-proxy-label">代理（地址留空 = 直连）</div>
+          <div class="proxy-scheme">
+            <label class="inline"><input type="radio" name="proxy-scheme" id="proxy-socks5" value="socks5" checked /> socks5</label>
+            <label class="inline"><input type="radio" name="proxy-scheme" id="proxy-http" value="http" /> http</label>
+          </div>
+          <div class="composer-row">
+            <input id="set-proxy-host" type="text" class="grow" placeholder="代理地址，如 127.0.0.1" />
+            <input id="set-proxy-port" type="number" min="1" max="65535" class="proxy-port" placeholder="端口" />
+            <button id="proxy-test" class="btn" title="通过该代理尝试连接 Telegram">测试</button>
+          </div>
         </div>
-        <div class="composer-row">
-          <input id="set-proxy-host" type="text" class="grow" placeholder="代理地址，如 127.0.0.1" />
-          <input id="set-proxy-port" type="number" min="1" max="65535" class="proxy-port" placeholder="端口" />
-          <button id="proxy-test" class="btn" title="通过该代理尝试连接 Telegram">测试</button>
+        <p class="muted set-hint">速率修改对正在进行的上传也即时生效；修改代理会断开并重连所有账号（进行中的上传会中断）。</p>
+        <div class="dialog-actions">
+          <button id="settings-cancel" class="btn">取消</button>
+          <button id="settings-save" class="btn primary">保存</button>
         </div>
       </div>
-      <p class="muted set-hint">速率修改对正在进行的上传也即时生效；修改代理会断开并重连所有账号（进行中的上传会中断）。</p>
-      <div class="set-backup">
-        <div class="set-backup-label">数据备份 / 恢复</div>
-        <div class="composer-row">
-          <button id="btn-backup" class="btn">备份数据（下载 .tdl）</button>
-          <button id="btn-recover" class="btn">恢复数据（上传 .tdl）</button>
-          <input id="recover-file" type="file" accept=".tdl" hidden />
+
+      <div class="settings-pane hidden" id="spane-backup">
+        <div class="set-backup">
+          <div class="set-backup-label">数据备份 / 恢复</div>
+          <div class="composer-row">
+            <button id="btn-backup" class="btn">备份数据（下载 .tdl）</button>
+            <button id="btn-recover" class="btn">恢复数据（上传 .tdl）</button>
+            <input id="recover-file" type="file" accept=".tdl" hidden />
+          </div>
+          <p class="muted set-hint">备份文件【未加密】，等同账号凭据，请妥善保管、勿明文外传。恢复为【合并导入】：会用备份覆盖同名账号的 session/缓存，但不会删除备份里没有的账号。</p>
         </div>
-        <p class="muted set-hint">备份文件【未加密】，等同账号凭据，请妥善保管、勿明文外传。恢复为【合并导入】：会用备份覆盖同名账号的 session/缓存，但不会删除备份里没有的账号。</p>
       </div>
-      <div class="dialog-actions">
-        <button id="settings-cancel" class="btn">取消</button>
-        <button id="settings-save" class="btn primary">保存</button>
-      </div>
+
       <p id="settings-status" class="status"></p>
     </div>
   </div>

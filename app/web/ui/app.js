@@ -471,6 +471,7 @@ async function checkLogin() {
         }
         setCurrent(loginNs);
         await loadAccounts();
+        refreshChats().catch(() => {}); // new account has no cached chats: pull its list right away
         setTimeout(closeLoginModal, 1000);
         break;
       }
@@ -781,6 +782,7 @@ function buildProxy() {
 
 async function openSettings() {
   setStatus($("settings-status"), "");
+  setSettingsTab("proxy"); // always land on the proxy/rate tab
   $("set-rate").value = "";
   parseProxy("");
   $("settings-modal").classList.add("open");
@@ -794,6 +796,14 @@ async function openSettings() {
   setTimeout(() => $("set-rate").focus(), 30);
 }
 function closeSettings() { $("settings-modal").classList.remove("open"); }
+
+// settings tabs: 代理·限速 | 数据备份
+function setSettingsTab(t) {
+  document.querySelectorAll(".settings-tab").forEach((x) => x.classList.toggle("active", x.dataset.stab === t));
+  $("spane-proxy").classList.toggle("hidden", t !== "proxy");
+  $("spane-backup").classList.toggle("hidden", t !== "backup");
+}
+document.querySelectorAll(".settings-tab").forEach((x) => x.addEventListener("click", () => setSettingsTab(x.dataset.stab)));
 
 async function saveSettings() {
   const btn = $("settings-save");
