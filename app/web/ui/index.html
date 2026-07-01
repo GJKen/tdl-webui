@@ -194,6 +194,15 @@
         </div>
       </div>
       <p class="muted set-hint">速率修改对正在进行的上传也即时生效；修改代理会断开并重连所有账号（进行中的上传会中断）。</p>
+      <div class="set-backup">
+        <div class="set-backup-label">数据备份 / 恢复</div>
+        <div class="composer-row">
+          <button id="btn-backup" class="btn">备份数据（下载 .tdl）</button>
+          <button id="btn-recover" class="btn">恢复数据（上传 .tdl）</button>
+          <input id="recover-file" type="file" accept=".tdl" hidden />
+        </div>
+        <p class="muted set-hint">备份文件【未加密】，等同账号凭据，请妥善保管、勿明文外传。恢复为【合并导入】：会用备份覆盖同名账号的 session/缓存，但不会删除备份里没有的账号。</p>
+      </div>
       <div class="dialog-actions">
         <button id="settings-cancel" class="btn">取消</button>
         <button id="settings-save" class="btn primary">保存</button>

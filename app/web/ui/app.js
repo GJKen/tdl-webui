@@ -755,6 +755,50 @@ async function testProxy() {
   }
 }
 $("proxy-test").onclick = testProxy;
+
+// --- backup / recover (download / upload the .tdl dump) ---
+
+// backup: a GET with Content-Disposition; an anchor click lets the browser save
+// it straight to disk (no need to buffer the bytes in JS).
+function downloadBackup() {
+  const a = document.createElement("a");
+  a.href = "/api/backup";
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function recoverBackup(file) {
+  const ok = await showConfirm(
+    "恢复数据",
+    "将用该备份合并导入账号数据，覆盖同名账号的 session/缓存（不会删除备份里没有的账号）。确定继续？",
+    { okText: "恢复", danger: true }
+  );
+  if (!ok) return;
+  setStatus($("settings-status"), "恢复中…");
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/recover", { method: "POST", body: fd });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+    setStatus($("settings-status"), "✓ 恢复成功", "ok");
+    await loadAccounts();
+    showAlert("恢复成功", "数据已合并导入，账号已重连。如某账号未生效，可在账号栏点 ⟳ 刷新或重启 server。");
+  } catch (e) {
+    setStatus($("settings-status"), "✗ 恢复失败：" + e.message, "err");
+  }
+}
+
+$("btn-backup").onclick = downloadBackup;
+$("btn-recover").onclick = () => $("recover-file").click();
+$("recover-file").onchange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ""; // allow re-selecting the same file later
+  if (file) recoverBackup(file);
+};
+
 $("settings-modal").addEventListener("click", (e) => { if (e.target === $("settings-modal")) closeSettings(); });
 $("settings-modal").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { e.preventDefault(); closeSettings(); }

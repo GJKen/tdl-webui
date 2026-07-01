@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 
 	"github.com/fatih/color"
@@ -14,14 +15,12 @@ import (
 	"github.com/iyear/tdl/pkg/kv"
 )
 
-func Recover(ctx context.Context, file string) (rerr error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return errors.Wrap(err, "open file")
-	}
-	defer multierr.AppendInvoke(&rerr, multierr.Close(f))
-
-	dec, err := zstd.NewReader(f)
+// RecoverFrom reads a zstd-compressed backup from r and merges it into s. It's
+// the storage-agnostic core shared by the CLI `recover` command and the web UI
+// upload endpoint. The merge is an upsert: keys in the backup overwrite, keys
+// absent from the backup are kept.
+func RecoverFrom(s kv.Storage, r io.Reader) error {
+	dec, err := zstd.NewReader(r)
 	if err != nil {
 		return errors.Wrap(err, "create zstd decoder")
 	}
@@ -37,8 +36,22 @@ func Recover(ctx context.Context, file string) (rerr error) {
 		return errors.Wrap(err, "unmarshal metadata")
 	}
 
-	if err = kv.From(ctx).MigrateFrom(meta); err != nil {
+	if err = s.MigrateFrom(meta); err != nil {
 		return errors.Wrap(err, "migrate from")
+	}
+
+	return nil
+}
+
+func Recover(ctx context.Context, file string) (rerr error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return errors.Wrap(err, "open file")
+	}
+	defer multierr.AppendInvoke(&rerr, multierr.Close(f))
+
+	if err = RecoverFrom(kv.From(ctx), f); err != nil {
+		return err
 	}
 
 	color.Green("Recover successfully, file: %s", file)

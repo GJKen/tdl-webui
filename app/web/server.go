@@ -102,6 +102,8 @@ func (s *Server) router() http.Handler {
 	api.HandleFunc("/settings", s.handleSettingsGet).Methods(http.MethodGet)
 	api.HandleFunc("/settings", s.handleSettingsSet).Methods(http.MethodPut)
 	api.HandleFunc("/settings/proxy-test", s.handleProxyTest).Methods(http.MethodPost)
+	api.HandleFunc("/backup", s.handleBackup).Methods(http.MethodGet)
+	api.HandleFunc("/recover", s.handleRecover).Methods(http.MethodPost)
 
 	// static UI. no-cache so browsers always pick up the latest embedded assets
 	// (this is a local dev tool; correctness beats caching here).

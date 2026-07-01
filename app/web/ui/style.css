@@ -333,6 +333,9 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 1
   fill: currentColor;
 }
 .set-hint { margin: 6px 0 2px; font-size: 12px; line-height: 1.5; }
+.set-backup { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.set-backup-label { font-size: 13px; margin-bottom: 8px; }
+.set-backup .composer-row { flex-wrap: wrap; }
 .set-proxy-label { font-size: 13px; margin-bottom: 6px; }
 .proxy-scheme { display: flex; gap: 16px; margin-bottom: 8px; }
 .proxy-scheme .inline { width: auto; }

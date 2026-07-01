@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 
 	"github.com/fatih/color"
@@ -13,19 +14,16 @@ import (
 	"github.com/iyear/tdl/pkg/kv"
 )
 
-func Backup(ctx context.Context, dst string) (rerr error) {
-	meta, err := kv.From(ctx).MigrateTo()
+// BackupTo reads all data from s, JSON-encodes it and writes it zstd-compressed
+// to w. It's the storage-agnostic core shared by the CLI `backup` command and
+// the web UI download endpoint.
+func BackupTo(s kv.Storage, w io.Writer) (rerr error) {
+	meta, err := s.MigrateTo()
 	if err != nil {
 		return errors.Wrap(err, "read metadata")
 	}
 
-	f, err := os.Create(dst)
-	if err != nil {
-		return errors.Wrap(err, "create file")
-	}
-	defer multierr.AppendInvoke(&rerr, multierr.Close(f))
-
-	enc, err := zstd.NewWriter(f, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+	enc, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return errors.Wrap(err, "create zstd encoder")
 	}
@@ -38,6 +36,20 @@ func Backup(ctx context.Context, dst string) (rerr error) {
 
 	if _, err = enc.Write(metaB); err != nil {
 		return errors.Wrap(err, "write metadata")
+	}
+
+	return nil
+}
+
+func Backup(ctx context.Context, dst string) (rerr error) {
+	f, err := os.Create(dst)
+	if err != nil {
+		return errors.Wrap(err, "create file")
+	}
+	defer multierr.AppendInvoke(&rerr, multierr.Close(f))
+
+	if err = BackupTo(kv.From(ctx), f); err != nil {
+		return err
 	}
 
 	color.Green("Backup successfully, file: %s", dst)
