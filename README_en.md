@@ -55,6 +55,7 @@ What it offers:
 - **Multi-account login** via verification code; switch the active account right in the browser
 - **Telegram-style chat console** — each conversation's uploads render as message bubbles
 - **Send files** by drag-and-drop or file picker (photos / videos / files, and albums), or by a server-local path
+- **Backup / restore** — download a `.tdl` backup or restore one from the settings dialog (interchangeable with the CLI `backup`/`recover`)
 - **Task overview** with live upload progress
 
 > [!WARNING]
