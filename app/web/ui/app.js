@@ -281,13 +281,19 @@ let loginPoll = null;
 // while the backend is still verifying it stays on that stage, so we show a
 // steady "校验中…" instead of re-printing the prompt over our "submitted" message.
 let submittedFor = null;
+let loginMode = "code"; // active login tab: "code" | "qr"
 
 function openLoginModal() {
   closeAccountMenu();
-  // reset wizard to step 1
+  loginId = null;
+  loginMode = "code";
+  // reset wizard: code tab active, step 1 (phone) visible
+  document.querySelectorAll(".login-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "code"));
   $("step-phone").classList.remove("hidden");
+  $("step-qr").classList.add("hidden");
   $("step-code").classList.add("hidden");
   $("step-password").classList.add("hidden");
+  $("login-qr").removeAttribute("src");
   $("login-name").value = "";
   $("login-phone").value = "";
   $("login-code").value = "";
@@ -299,6 +305,7 @@ function openLoginModal() {
   $("login-name").focus();
 }
 function closeLoginModal() {
+  cancelQRLogin();
   stopLogin();
   $("login-modal").classList.remove("open");
 }
@@ -361,6 +368,66 @@ async function startLogin() {
   }
 }
 
+// --- login tabs: code | qr ---
+function setLoginTab(mode) {
+  if (mode === loginMode) return;
+  if (loginMode === "qr") cancelQRLogin(); // leaving QR: drop its temp ns if unfinished
+  loginMode = mode;
+  stopLogin();
+  loginId = null;
+  submittedFor = null;
+  $("login-code").value = "";
+  $("login-password").value = "";
+  document.querySelectorAll(".login-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === mode));
+  $("step-code").classList.add("hidden");
+  $("step-password").classList.add("hidden");
+  setStatus($("login-status"), "");
+  if (mode === "code") {
+    $("step-qr").classList.add("hidden");
+    $("login-qr").removeAttribute("src");
+    $("step-phone").classList.remove("hidden");
+    $("btn-login-start").disabled = false;
+  } else {
+    $("step-phone").classList.add("hidden");
+    $("step-qr").classList.remove("hidden");
+    startQRLogin();
+  }
+}
+document.querySelectorAll(".login-tab").forEach((t) =>
+  t.addEventListener("click", () => setLoginTab(t.dataset.tab)));
+
+// startQRLogin begins a QR login and polls for the QR image + result. No phone
+// is needed; a blank name generates a namespace and the account is later titled
+// with the Telegram nickname (same done-branch as code login).
+async function startQRLogin() {
+  const status = $("login-status");
+  const name = $("login-name").value.trim();
+  let ns = sanitizeNs(name);
+  if (!ns) ns = "tgqr" + Date.now();
+  loginNs = ns;
+  pendingAlias = name; // display name on success (blank → TG nickname)
+  submittedFor = null;
+  setStatus(status, "正在生成二维码…", "info");
+  try {
+    const r = await api("POST", `/accounts/${encodeURIComponent(ns)}/login/qr/start`, {});
+    loginId = r.login_id;
+    pollLogin();
+  } catch (e) {
+    setStatus(status, e.message, "err");
+  }
+}
+
+// Abandon an in-progress QR login so the backend drops its temporary namespace
+// (gotd writes a session on connect, which would otherwise linger as a ghost
+// account). No-op unless a QR login is mid-flight.
+function cancelQRLogin() {
+  if (loginId && loginMode === "qr") {
+    const id = loginId;
+    loginId = null;
+    api("POST", `/login/${encodeURIComponent(id)}/cancel`, {}).catch(() => {});
+  }
+}
+
 function pollLogin() {
   if (loginPoll) clearInterval(loginPoll);
   loginPoll = setInterval(checkLogin, 1500);
@@ -375,6 +442,11 @@ async function checkLogin() {
     switch (st.stage) {
       case "starting":
         setStatus(status, "正在连接 Telegram…", "info"); break;
+      case "need_qr":
+        $("step-qr").classList.remove("hidden");
+        if (st.qr) $("login-qr").src = st.qr;
+        setStatus(status, "请用 Telegram 手机 App 扫描二维码…", "info");
+        break;
       case "need_code":
         $("step-code").classList.remove("hidden");
         $("step-password").classList.add("hidden");
@@ -390,6 +462,7 @@ async function checkLogin() {
         break;
       case "done": {
         stopLogin();
+        loginId = null; // finished — nothing left to cancel on close
         setStatus(status, `登录成功！ID ${st.self.id}${st.self.username ? " · @" + st.self.username : ""}`, "ok");
         // name the account: typed name if given, otherwise the Telegram nickname
         const alias = pendingAlias || selfName(st.self);
@@ -444,6 +517,13 @@ $("btn-login-password").onclick = async () => {
     setStatus($("login-status"), e.message, "err");
   }
 };
+
+// Enter in a field submits that step (previously click-only — easy to miss,
+// especially on the 2FA password box).
+$("login-phone").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); startLogin(); } });
+$("login-code").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("btn-login-code").click(); } });
+$("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("btn-login-password").click(); } });
+$("login-name").addEventListener("keydown", (e) => { if (e.key === "Enter" && loginMode === "code") { e.preventDefault(); $("login-phone").focus(); } });
 
 // ===================== chats console (Telegram-style) =====================
 // State: the conversation list (cached, per namespace), the global task list,

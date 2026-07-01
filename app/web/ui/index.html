@@ -211,17 +211,24 @@
     </div>
   </div>
 
-  <!-- Login modal (wizard: name+phone → code → 2FA → done) -->  <div id="login-modal" class="modal-overlay">
+  <!-- Login modal: shared name field + tab (code | qr) → code/qr → 2FA → done -->
+  <div id="login-modal" class="modal-overlay">
     <div class="modal">
       <div class="modal-head">
         <h2>登录 Telegram 账号</h2>
         <button id="login-close" class="icon-btn" title="关闭">✕</button>
       </div>
 
+      <label class="login-name-field">账号名称（可留空，留空就用 Telegram 昵称）
+        <input id="login-name" type="text" placeholder="留空 = 用 TG 昵称" />
+      </label>
+
+      <div class="login-tabs">
+        <button type="button" class="login-tab active" data-tab="code">验证码登录</button>
+        <button type="button" class="login-tab" data-tab="qr">扫码登录</button>
+      </div>
+
       <div class="login-step" id="step-phone">
-        <label>账号名称（可留空，留空就用 Telegram 昵称）
-          <input id="login-name" type="text" placeholder="留空 = 用 TG 昵称" />
-        </label>
         <label>手机号（含国家码，+ 号已自动带上，不用再输）
           <div class="phone-input">
             <span class="phone-prefix">+</span>
@@ -229,6 +236,11 @@
           </div>
         </label>
         <button id="btn-login-start" class="btn primary block">发送验证码</button>
+      </div>
+
+      <div class="login-step hidden" id="step-qr">
+        <div class="qr-box"><img id="login-qr" alt="登录二维码" /></div>
+        <p class="qr-hint">手机 Telegram → 设置 → 设备 → 关联桌面设备，扫描上方二维码</p>
       </div>
 
       <div class="login-step hidden" id="step-code">

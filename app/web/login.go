@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"strings"
@@ -11,7 +12,10 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
+	"github.com/skip2/go-qrcode"
 	"github.com/spf13/viper"
 
 	"github.com/iyear/tdl/core/storage"
@@ -29,6 +33,7 @@ type LoginStage string
 
 const (
 	StageStarting     LoginStage = "starting"
+	StageNeedQR       LoginStage = "need_qr"
 	StageNeedCode     LoginStage = "need_code"
 	StageNeedPassword LoginStage = "need_password"
 	StageDone         LoginStage = "done"
@@ -44,6 +49,7 @@ type SelfInfo struct {
 
 type LoginStatus struct {
 	Stage LoginStage `json:"stage"`
+	QR    string     `json:"qr,omitempty"` // QR login: PNG data URI to render as an image
 	Error string     `json:"error,omitempty"`
 	Self  *SelfInfo  `json:"self,omitempty"`
 }
@@ -60,11 +66,13 @@ type loginSession struct {
 	stage LoginStage
 	errs  string
 	self  *SelfInfo
+	qr    string // QR login: current PNG data URI (refreshed as the token rotates)
 
 	codeCh chan string
 	pwdCh  chan string
 
-	cancel context.CancelFunc
+	cancel    context.CancelFunc
+	nsCreated bool // QR login created this namespace this round; clean it up if login never finishes
 }
 
 func (s *loginSession) setStage(st LoginStage) {
@@ -73,10 +81,20 @@ func (s *loginSession) setStage(st LoginStage) {
 	s.mu.Unlock()
 }
 
+// setQR stores the latest QR image and marks the session as awaiting a scan.
+// qrlogin.Auth calls the show callback again whenever the token rotates (~30s),
+// so this is invoked repeatedly; the frontend just polls for the newest image.
+func (s *loginSession) setQR(uri string) {
+	s.mu.Lock()
+	s.qr = uri
+	s.stage = StageNeedQR
+	s.mu.Unlock()
+}
+
 func (s *loginSession) snapshot() LoginStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return LoginStatus{Stage: s.stage, Error: s.errs, Self: s.self}
+	return LoginStatus{Stage: s.stage, QR: s.qr, Error: s.errs, Self: s.self}
 }
 
 // webAuth implements gotd's auth.UserAuthenticator, bridging the blocking auth
@@ -229,6 +247,157 @@ func (m *LoginManager) run(ctx context.Context, s *loginSession, kvd storage.Sto
 	})
 	if err != nil {
 		fail(err)
+	}
+}
+
+// StartQR kicks off a QR-code login for the given namespace. Unlike code login
+// it needs no phone: the user scans the rendered QR with their Telegram app.
+func (m *LoginManager) StartQR(ns string) (string, error) {
+	ns, err := sanitizeNamespace(ns)
+	if err != nil {
+		return "", err
+	}
+
+	// Remember whether this namespace already existed. gotd writes an auth-key
+	// session as soon as it connects (before the user scans), so a QR login that
+	// is abandoned would leave a session-only namespace that shows up as a ghost
+	// account. If we created it this round, runQR cleans it up unless login
+	// actually completes. An existing namespace is never touched.
+	created := true
+	if names, err := m.engine.Namespaces(); err == nil {
+		for _, n := range names {
+			if n == ns {
+				created = false
+				break
+			}
+		}
+	}
+
+	kvd, err := m.engine.Open(ns)
+	if err != nil {
+		return "", errors.Wrap(err, "open kv")
+	}
+
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(m.base, loginTimeout)
+	s := &loginSession{
+		id:        id,
+		ns:        ns,
+		stage:     StageStarting,
+		codeCh:    make(chan string, 1),
+		pwdCh:     make(chan string, 1),
+		cancel:    cancel,
+		nsCreated: created,
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+
+	go m.runQR(ctx, s, kvd)
+	return id, nil
+}
+
+// runQR mirrors run() but drives gotd's QR login flow instead of the code flow.
+// It needs an UpdateDispatcher so qrlogin can observe UpdateLoginToken (the
+// "scanned & accepted" signal); the show callback fires again on every token
+// rotation (~30s), refreshing the image. 2FA is handled inline, same as
+// `tdl login -T qr`.
+func (m *LoginManager) runQR(ctx context.Context, s *loginSession, kvd storage.Storage) {
+	defer s.cancel()
+
+	fail := func(err error) {
+		s.mu.Lock()
+		s.stage = StageError
+		s.errs = err.Error()
+		s.mu.Unlock()
+	}
+
+	// mark app type as desktop, identical to `tdl login -T qr`.
+	if err := kvd.Set(ctx, key.App(), []byte(tclient.AppDesktop)); err != nil {
+		fail(errors.Wrap(err, "set app"))
+		return
+	}
+
+	d := tg.NewUpdateDispatcher()
+	c, err := tclient.New(ctx, tclient.Options{
+		KV:               kvd,
+		Proxy:            viper.GetString(consts.FlagProxy),
+		NTP:              viper.GetString(consts.FlagNTP),
+		ReconnectTimeout: viper.GetDuration(consts.FlagReconnectTimeout),
+		UpdateHandler:    d,
+	}, true)
+	if err != nil {
+		fail(errors.Wrap(err, "create client"))
+		return
+	}
+
+	err = c.Run(ctx, func(ctx context.Context) error {
+		_, err := c.QR().Auth(ctx, qrlogin.OnLoginToken(d), func(ctx context.Context, token qrlogin.Token) error {
+			png, err := qrcode.Encode(token.URL(), qrcode.Medium, 256)
+			if err != nil {
+				return errors.Wrap(err, "encode qr")
+			}
+			s.setQR("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+			return nil
+		})
+		if err != nil {
+			// https://core.telegram.org/api/auth#2fa
+			if !tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
+				return err
+			}
+			s.setStage(StageNeedPassword)
+			select {
+			case pwd := <-s.pwdCh:
+				if _, err := c.Auth().Password(ctx, strings.TrimSpace(pwd)); err != nil {
+					return errors.Wrap(err, "2fa auth")
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		user, err := c.Self(ctx)
+		if err != nil {
+			return errors.Wrap(err, "get self")
+		}
+
+		self := &SelfInfo{ID: user.ID, Username: user.Username, FirstName: user.FirstName, LastName: user.LastName}
+		cacheSelf(ctx, kvd, self)
+
+		s.mu.Lock()
+		s.stage = StageDone
+		s.self = self
+		s.mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		fail(err)
+	}
+
+	// Clean up a ghost namespace: if we created this ns this round but the login
+	// never completed (cancelled / timed out / errored), the only thing written
+	// is gotd's connection auth key, which would otherwise linger as an empty
+	// account. The client is already torn down (c.Run has returned), so the
+	// storage lock is released and DeleteNamespace can proceed.
+	s.mu.Lock()
+	done := s.stage == StageDone
+	s.mu.Unlock()
+	if !done && s.nsCreated {
+		_ = m.engine.DeleteNamespace(s.ns)
+	}
+}
+
+// Cancel aborts an in-progress login. For a QR login that never completed this
+// cancels its context, which unblocks runQR and triggers ghost-namespace
+// cleanup. No-op if the id is unknown or already finished.
+func (m *LoginManager) Cancel(id string) {
+	if s, ok := m.get(id); ok {
+		s.cancel()
 	}
 }
 

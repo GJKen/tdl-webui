@@ -90,9 +90,11 @@ func (s *Server) router() http.Handler {
 	api.HandleFunc("/accounts/{ns}/alias", s.handleAliasSet).Methods(http.MethodPatch)
 	api.HandleFunc("/accounts/{ns}/self", s.handleSelf).Methods(http.MethodGet)
 	api.HandleFunc("/accounts/{ns}/login/start", s.handleLoginStart).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{ns}/login/qr/start", s.handleLoginQRStart).Methods(http.MethodPost)
 	api.HandleFunc("/login/{id}/status", s.handleLoginStatus).Methods(http.MethodGet)
 	api.HandleFunc("/login/{id}/code", s.handleLoginCode).Methods(http.MethodPost)
 	api.HandleFunc("/login/{id}/password", s.handleLoginPassword).Methods(http.MethodPost)
+	api.HandleFunc("/login/{id}/cancel", s.handleLoginCancel).Methods(http.MethodPost)
 	api.HandleFunc("/accounts/{ns}/chats", s.handleChats).Methods(http.MethodGet)
 	api.HandleFunc("/accounts/{ns}/upload", s.handleUpload).Methods(http.MethodPost)
 	api.HandleFunc("/accounts/{ns}/upload-files", s.handleUploadFiles).Methods(http.MethodPost)
@@ -264,6 +266,20 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"login_id": id})
 }
 
+// handleLoginQRStart begins a QR-code login (no phone needed). The status
+// endpoint returns the QR image to render; the password endpoint is reused for
+// 2FA.
+func (s *Server) handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
+	ns := mux.Vars(r)["ns"]
+
+	id, err := s.logins.StartQR(ns)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"login_id": id})
+}
+
 func (s *Server) handleLoginStatus(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	st, ok := s.logins.Status(id)
@@ -305,6 +321,14 @@ func (s *Server) handleLoginPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleLoginCancel aborts an in-progress login (used when the user closes the
+// wizard or switches away from the QR tab), letting the backend drop a QR
+// namespace that never finished logging in.
+func (s *Server) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
+	s.logins.Cancel(mux.Vars(r)["id"])
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
