@@ -61,6 +61,7 @@
                 <circle cx="11" cy="17" r="2"/>
               </svg>
             </button>
+            <button id="btn-download" class="btn foot-icon" title="粘贴链接下载" aria-label="下载">⬇</button>
             <button id="btn-refresh-chats" class="btn grow">⟳ 刷新会话列表</button>
           </div>
           <button id="chat-totop" class="to-top" title="返回顶部" aria-label="返回顶部">
@@ -168,6 +169,46 @@
     </div>
   </div>
 
+  <!-- Download modal: paste one or more t.me links -->
+  <div id="download-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>粘贴链接下载</h2>
+        <button id="download-close" class="icon-btn" title="关闭">✕</button>
+      </div>
+
+      <label>Telegram 消息链接（一行一个，支持多条）
+        <textarea id="dl-urls" rows="5" placeholder="https://t.me/xxx/123&#10;https://t.me/c/456/789"></textarea>
+      </label>
+
+      <div class="dl-mode">
+        <div class="dl-mode-head">
+          <span>下载到哪里</span>
+          <span class="help-badge" tabindex="0" role="button" aria-label="两种方式的区别">?
+            <span class="help-pop">这两种方式的区别只在于【服务器和你的浏览器是不是同一台机器】。<br><br>
+              · <b>下到我的电脑</b>：文件走浏览器，存进浏览器的下载文件夹（如 C:\Users\你\Downloads）。<br><br>
+              · <b>下到服务器</b>：文件由服务器直接存到你填写的那个文件夹，不经过浏览器；带断点续传，适合大文件/批量。<br><br>
+              如果你现在是【本机自己开服务、自己开网页】，两种方式最后文件都在你这台电脑上，只是存的文件夹不同——这种情况建议用「下到服务器」，填个路径批量下更省事。</span>
+          </span>
+        </div>
+        <label class="inline"><input type="radio" name="dl-mode" id="dl-mode-stream" value="stream" checked /> 下到我的电脑（走浏览器下载）</label>
+        <label class="inline"><input type="radio" name="dl-mode" id="dl-mode-disk" value="disk" /> 下到服务器（存到指定文件夹，带断点续传）</label>
+      </div>
+
+      <label id="dl-dir-field" class="hidden">保存到哪个文件夹（服务器上的绝对路径）
+        <input id="dl-dir" type="text" placeholder="如 D:\downloads 或 /data/tg" />
+      </label>
+
+      <p class="muted set-hint">「下到我的电脑」逐条触发浏览器下载，多条时浏览器可能提示允许批量下载。「下到服务器」把多条链接合并为一个任务批量下载，进度条在运行服务的终端里，任务栏可看状态。</p>
+
+      <div class="dialog-actions">
+        <button id="download-cancel" class="btn">取消</button>
+        <button id="download-go" class="btn primary">开始下载</button>
+      </div>
+      <p id="download-status" class="status"></p>
+    </div>
+  </div>
+
   <!-- Settings modal: tabs for [代理·限速] and [数据备份] -->
   <div id="settings-modal" class="modal-overlay">
     <div class="modal">
@@ -182,11 +223,27 @@
       </div>
 
       <div class="settings-pane" id="spane-proxy">
-        <label>上传速率限制（留空 = 不限速；1024 进制，如 5M、500K、2.5MB）
-          <input id="set-rate" type="text" placeholder="留空 = 不限速" />
+        <label>上传速率限制（留空 = 不限速；1024 进制，支持小数如 0.5）
+          <div class="composer-row">
+            <input id="set-rate" type="number" min="0" step="any" class="grow" placeholder="留空 = 不限速" />
+            <select id="set-rate-unit" class="rate-unit" aria-label="上传速率单位">
+              <option value="K">KB/s</option>
+              <option value="M" selected>MB/s</option>
+              <option value="G">GB/s</option>
+              <option value="T">TB/s</option>
+            </select>
+          </div>
         </label>
-        <label class="muted">下载速率限制（网页版暂未实现下载，此项当前无效）
-          <input id="set-rate-dl" type="text" placeholder="暂未实现" disabled />
+        <label>下载速率限制（对粘贴链接下载生效，含流式和落盘；留空 = 不限速）
+          <div class="composer-row">
+            <input id="set-rate-dl" type="number" min="0" step="any" class="grow" placeholder="留空 = 不限速" />
+            <select id="set-rate-dl-unit" class="rate-unit" aria-label="下载速率单位">
+              <option value="K">KB/s</option>
+              <option value="M" selected>MB/s</option>
+              <option value="G">GB/s</option>
+              <option value="T">TB/s</option>
+            </select>
+          </div>
         </label>
         <div class="set-proxy">
           <div class="set-proxy-label">代理（地址留空 = 直连）</div>

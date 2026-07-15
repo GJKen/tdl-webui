@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 
 	"github.com/iyear/tdl/core/dcpool"
 	"github.com/iyear/tdl/core/downloader"
@@ -45,6 +46,10 @@ type Options struct {
 	// serve
 	Serve bool
 	Port  int
+
+	// Limiter, when non-nil, overrides the --rate flag (the web UI injects a
+	// shared, live-adjustable limiter here so mid-flight rate changes apply).
+	Limiter *rate.Limiter
 }
 
 type parser struct {
@@ -103,9 +108,13 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		prog.EnablePS(ctx, dlProgress)
 	}
 
-	rate, err := utils.Byte.Parse(viper.GetString(consts.FlagRate))
+	rateVal, err := utils.Byte.Parse(viper.GetString(consts.FlagRate))
 	if err != nil {
 		return errors.Wrap(err, "parse rate")
+	}
+	limiter := utils.NewRateLimiter(rateVal)
+	if opts.Limiter != nil {
+		limiter = opts.Limiter
 	}
 
 	options := downloader.Options{
@@ -113,7 +122,7 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		Threads:  viper.GetInt(consts.FlagThreads),
 		Iter:     it,
 		Progress: newProgress(dlProgress, it, opts),
-		Limiter:  utils.NewRateLimiter(rate),
+		Limiter:  limiter,
 	}
 	limit := viper.GetInt(consts.FlagLimit)
 
@@ -123,7 +132,7 @@ func Run(ctx context.Context, c *telegram.Client, kvd storage.Storage, opts Opti
 		zap.Bool("skip_same", opts.SkipSame),
 		zap.Int("threads", options.Threads),
 		zap.Int("limit", limit),
-		zap.Int64("rate", rate))
+		zap.Int64("rate", rateVal))
 
 	color.Green("All files will be downloaded to '%s' dir", opts.Dir)
 

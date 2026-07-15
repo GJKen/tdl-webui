@@ -28,10 +28,12 @@ type Settings struct {
 	engine  kv.Storage
 	clients *ClientManager
 
-	mu      sync.RWMutex
-	rateStr string        // human form ("5M", "" = unlimited), for display + persistence
-	proxy   string        // proxy URL, "" = direct
-	limiter *rate.Limiter // always non-nil; shared by uploads, retuned in place
+	mu        sync.RWMutex
+	rateStr   string        // upload rate, human form ("5M", "" = unlimited), for display + persistence
+	rateDlStr string        // download rate, same form
+	proxy     string        // proxy URL, "" = direct
+	limiter   *rate.Limiter // always non-nil; shared by uploads, retuned in place
+	dlLimiter *rate.Limiter // always non-nil; shared by downloads (to-disk + stream), retuned in place
 }
 
 // loadSettings builds the Settings, reading any persisted values. Persisted
@@ -53,6 +55,19 @@ func loadSettings(ctx context.Context, engine kv.Storage, clients *ClientManager
 	}
 	s.rateStr = rateStr
 	s.limiter = utils.NewSharedRateLimiter(bps)
+
+	// download rate: the shared --rate flag seeds it too (CLI semantics: one flag
+	// for both directions); a persisted web value overrides
+	rateDlStr := viper.GetString(consts.FlagRate)
+	if v, ok := s.get(ctx, key.WebRateDl()); ok {
+		rateDlStr = v
+	}
+	bpsDl, err := utils.Byte.Parse(rateDlStr)
+	if err != nil {
+		bpsDl, rateDlStr = 0, ""
+	}
+	s.rateDlStr = rateDlStr
+	s.dlLimiter = utils.NewSharedRateLimiter(bpsDl)
 
 	// proxy: persisted value overrides the flag; push the result to viper so the
 	// long-lived clients (created right after) connect through it
@@ -90,10 +105,10 @@ func (s *Settings) set(ctx context.Context, k, v string) error {
 }
 
 // snapshot returns the current settings for display.
-func (s *Settings) snapshot() (rateStr, proxy string) {
+func (s *Settings) snapshot() (rateStr, rateDlStr, proxy string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.rateStr, s.proxy
+	return s.rateStr, s.rateDlStr, s.proxy
 }
 
 // Limiter returns the shared upload limiter (always non-nil) to hand to up.Run.
@@ -101,6 +116,14 @@ func (s *Settings) Limiter() *rate.Limiter {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.limiter
+}
+
+// DownLimiter returns the shared download limiter (always non-nil), used by both
+// the to-disk path (dl.Run) and the browser streaming path.
+func (s *Settings) DownLimiter() *rate.Limiter {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dlLimiter
 }
 
 // setRate validates and applies a new upload rate (human form, "" = unlimited),
@@ -117,6 +140,21 @@ func (s *Settings) setRate(ctx context.Context, rateStr string) error {
 	s.rateStr = rateStr
 	s.mu.Unlock()
 	return s.set(ctx, key.WebRate(), rateStr)
+}
+
+// setRateDl is setRate's counterpart for the download limiter (shared by
+// in-flight to-disk downloads and browser streams alike).
+func (s *Settings) setRateDl(ctx context.Context, rateStr string) error {
+	rateStr = strings.TrimSpace(rateStr)
+	bps, err := utils.Byte.Parse(rateStr)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	utils.SetRateLimit(s.dlLimiter, bps)
+	s.rateDlStr = rateStr
+	s.mu.Unlock()
+	return s.set(ctx, key.WebRateDl(), rateStr)
 }
 
 // setProxy applies a new proxy: persists it, pushes it to viper, and drops all

@@ -36,6 +36,7 @@ type TaskFile struct {
 type Task struct {
 	ID        string     `json:"id"`
 	Namespace string     `json:"namespace"`
+	Kind      string     `json:"kind,omitempty"` // "" / "upload" (default) or "download"
 	Target    string     `json:"target"`
 	ChatID    int64      `json:"chat_id,omitempty"`
 	ChatName  string     `json:"chat_name,omitempty"`

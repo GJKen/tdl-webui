@@ -39,11 +39,15 @@ func WebChats() string {
 	return keygen.New("web", "chats")
 }
 
-// WebRate and WebProxy are server-global web UI settings (upload rate limit and
-// proxy), stored under a reserved settings namespace — not a real account — so
-// they persist across restarts.
+// WebRate, WebRateDl and WebProxy are server-global web UI settings (upload /
+// download rate limits and proxy), stored under a reserved settings namespace —
+// not a real account — so they persist across restarts.
 func WebRate() string {
 	return keygen.New("web", "rate")
+}
+
+func WebRateDl() string {
+	return keygen.New("web", "rate_dl")
 }
 
 func WebProxy() string {

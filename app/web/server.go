@@ -99,6 +99,8 @@ func (s *Server) router() http.Handler {
 	api.HandleFunc("/accounts/{ns}/upload", s.handleUpload).Methods(http.MethodPost)
 	api.HandleFunc("/accounts/{ns}/upload-files", s.handleUploadFiles).Methods(http.MethodPost)
 	api.HandleFunc("/accounts/{ns}/upload-album", s.handleUploadAlbum).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{ns}/download", s.handleDownload).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{ns}/download-stream", s.handleDownloadStream).Methods(http.MethodGet)
 	api.HandleFunc("/tasks", s.handleTasks).Methods(http.MethodGet)
 	api.HandleFunc("/tasks/{id}", s.handleTaskCancel).Methods(http.MethodDelete)
 	api.HandleFunc("/settings", s.handleSettingsGet).Methods(http.MethodGet)
@@ -349,17 +351,18 @@ func (s *Server) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 // settingsBody is the JSON shape for both GET (response) and PUT (request) of
 // the server-global web settings.
 type settingsBody struct {
-	Rate  string `json:"rate"`  // upload rate limit, human form ("5M"); "" = unlimited
-	Proxy string `json:"proxy"` // proxy URL; "" = direct
+	Rate   string `json:"rate"`    // upload rate limit, human form ("5M"); "" = unlimited
+	RateDl string `json:"rate_dl"` // download rate limit, same form
+	Proxy  string `json:"proxy"`   // proxy URL; "" = direct
 }
 
 func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
-	rateStr, proxy := s.settings.snapshot()
-	writeJSON(w, http.StatusOK, settingsBody{Rate: rateStr, Proxy: proxy})
+	rateStr, rateDlStr, proxy := s.settings.snapshot()
+	writeJSON(w, http.StatusOK, settingsBody{Rate: rateStr, RateDl: rateDlStr, Proxy: proxy})
 }
 
-// handleSettingsSet applies a new upload rate and/or proxy. The rate retunes the
-// shared limiter live (in-flight uploads included); changing the proxy
+// handleSettingsSet applies new upload/download rates and/or proxy. Rates retune
+// the shared limiters live (in-flight transfers included); changing the proxy
 // reconnects all accounts.
 func (s *Server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 	var body settingsBody
@@ -372,15 +375,20 @@ func (s *Server) handleSettingsSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid rate: %w", err))
 		return
 	}
+	if err := s.settings.setRateDl(r.Context(), body.RateDl); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid download rate: %w", err))
+		return
+	}
 	proxyChanged, err := s.settings.setProxy(r.Context(), body.Proxy)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	rateStr, proxy := s.settings.snapshot()
+	rateStr, rateDlStr, proxy := s.settings.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rate":          rateStr,
+		"rate_dl":       rateDlStr,
 		"proxy":         proxy,
 		"proxy_changed": proxyChanged, // UI hint: accounts were reconnected
 	})

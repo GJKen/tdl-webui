@@ -780,15 +780,41 @@ function buildProxy() {
   return scheme + "://" + host + (port ? ":" + port : "");
 }
 
+// Rates are stored/sent as the backend's human form ("5M", "0.5M"; "" =
+// unlimited) but edited as a number input + unit dropdown. splitRate breaks a
+// stored string into {num, unit} (bare-byte values are scaled to the most
+// readable unit); joinRate composes the form back into the wire string.
+const RATE_UNITS = { K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
+function splitRate(str) {
+  const m = /^([\d.]+)\s*([a-zA-Z]*)$/.exec((str || "").trim());
+  const n = m ? parseFloat(m[1]) : NaN;
+  if (!m || !(n > 0)) return { num: "", unit: "M" };
+  const letter = (m[2] || "B")[0].toUpperCase();
+  if (RATE_UNITS[letter]) return { num: m[1], unit: letter };
+  // bare bytes (or explicit "B"): scale up to the largest unit that keeps num >= 1
+  for (const u of ["T", "G", "M"]) {
+    if (n >= RATE_UNITS[u]) return { num: String(+(n / RATE_UNITS[u]).toFixed(2)), unit: u };
+  }
+  return { num: String(+(n / RATE_UNITS.K).toFixed(2)), unit: "K" };
+}
+function joinRate(numStr, unit) {
+  const n = parseFloat(numStr);
+  if (!(n > 0)) return ""; // empty or 0 = unlimited
+  return String(n) + unit;
+}
+
 async function openSettings() {
   setStatus($("settings-status"), "");
   setSettingsTab("proxy"); // always land on the proxy/rate tab
-  $("set-rate").value = "";
+  $("set-rate").value = ""; $("set-rate-unit").value = "M";
+  $("set-rate-dl").value = ""; $("set-rate-dl-unit").value = "M";
   parseProxy("");
   $("settings-modal").classList.add("open");
   try {
     const s = await api("GET", "/settings");
-    $("set-rate").value = (s && s.rate) || "";
+    const up = splitRate(s && s.rate), dl = splitRate(s && s.rate_dl);
+    $("set-rate").value = up.num; $("set-rate-unit").value = up.unit;
+    $("set-rate-dl").value = dl.num; $("set-rate-dl-unit").value = dl.unit;
     parseProxy((s && s.proxy) || "");
   } catch (e) {
     setStatus($("settings-status"), "读取设置失败：" + e.message, "err");
@@ -811,7 +837,8 @@ async function saveSettings() {
   setStatus($("settings-status"), "保存中…");
   try {
     const res = await api("PUT", "/settings", {
-      rate: $("set-rate").value.trim(),
+      rate: joinRate($("set-rate").value, $("set-rate-unit").value),
+      rate_dl: joinRate($("set-rate-dl").value, $("set-rate-dl-unit").value),
       proxy: buildProxy(),
     });
     closeSettings();
@@ -827,6 +854,79 @@ $("btn-settings").onclick = openSettings;
 $("settings-close").onclick = closeSettings;
 $("settings-cancel").onclick = closeSettings;
 $("settings-save").onclick = saveSettings;
+
+// --- download modal (paste t.me links: stream to browser | to server dir) ---
+
+function openDownload() {
+  if (!currentNs) { showAlert("下载", "请先登录一个账号"); return; }
+  setStatus($("download-status"), "");
+  $("dl-urls").value = "";
+  $("dl-mode-stream").checked = true;
+  $("dl-dir").value = "";
+  syncDlMode();
+  $("download-modal").classList.add("open");
+  setTimeout(() => $("dl-urls").focus(), 30);
+}
+function closeDownload() { $("download-modal").classList.remove("open"); }
+
+// toggle the server-dir field visibility based on the picked mode
+function syncDlMode() {
+  $("dl-dir-field").classList.toggle("hidden", !$("dl-mode-disk").checked);
+}
+document.querySelectorAll("input[name='dl-mode']").forEach((x) => x.addEventListener("change", syncDlMode));
+
+// parse the textarea into a clean list of non-empty links
+function dlLinks() {
+  return $("dl-urls").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+async function startDownload() {
+  const ns = currentNs;
+  if (!ns) { showAlert("下载", "请先登录一个账号"); return; }
+  const urls = dlLinks();
+  if (!urls.length) { setStatus($("download-status"), "请至少粘贴一条链接", "err"); return; }
+
+  if ($("dl-mode-stream").checked) {
+    // stream to browser: trigger one download per link via a hidden <a download>.
+    // A short stagger avoids the browser dropping simultaneous navigations.
+    urls.forEach((u, i) => {
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = "/api/accounts/" + encodeURIComponent(ns) +
+          "/download-stream?url=" + encodeURIComponent(u);
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 400);
+    });
+    closeDownload();
+    return;
+  }
+
+  // to server dir: one batch task via the CLI downloader
+  const dir = $("dl-dir").value.trim();
+  if (!dir) { setStatus($("download-status"), "请填写要保存到的文件夹路径", "err"); return; }
+  const btn = $("download-go");
+  btn.disabled = true;
+  setStatus($("download-status"), "提交中…");
+  try {
+    await api("POST", "/accounts/" + encodeURIComponent(ns) + "/download", { urls, dir });
+    closeDownload();
+    refreshTasks();
+  } catch (e) {
+    setStatus($("download-status"), "下载失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("btn-download").onclick = openDownload;
+$("download-close").onclick = closeDownload;
+$("download-cancel").onclick = closeDownload;
+$("download-go").onclick = startDownload;
+$("download-modal").addEventListener("click", (e) => { if (e.target === $("download-modal")) closeDownload(); });
+
 
 // test the currently-entered proxy (no need to save first)
 async function testProxy() {
@@ -1779,7 +1879,7 @@ function renderTasksTab() {
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td>#${t.id}</td>` +
-      `<td>${escapeHtml(t.namespace)}</td>` +
+      `<td>${escapeHtml(t.namespace)}${t.kind === "download" ? " <span class='badge'>下载</span>" : ""}</td>` +
       `<td>${escapeHtml(t.chat_name || t.target)}</td>` +
       `<td class='path' title='${escapeHtml((t.paths || []).join(", "))}'>${escapeHtml((t.paths || []).join(", "))}</td>` +
       `<td><span class='badge ${t.status}'>${t.status}</span></td>` +
